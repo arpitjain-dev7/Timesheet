@@ -1,0 +1,83 @@
+spring:
+  application:
+    name: timesheetmanagement
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/timesheet_auth_db
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:Krishna}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false          # SQL logged via Hibernate category below
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 10MB
+      max-request-size: 12MB
+
+server:
+  port: 8080
+
+jwt:
+  secret: 5367566B59703373367639792F423F4528482B4D6251655468576D5A71347437
+  expiration: 86400000          # 24 hours in milliseconds
+  refresh-expiration: 604800000 # 7 days in milliseconds
+
+app:
+  upload:
+    dir: uploads/profile-photos
+
+  cors:
+    # Add every origin that should be allowed to call the API.
+    # In production replace with your actual frontend URL, e.g. https://myapp.com
+    allowed-origins:
+      - http://localhost:5173   # Vite / React dev server
+      - http://localhost:3000   # Create-React-App dev server (common alternative)
+      - http://localhost:4200   # Angular dev server (add/remove as needed)
+
+# ── Logging ────────────────────────────────────────────────────────────────────
+logging:
+  level:
+    root: INFO
+    # Application packages
+    com.timesheetManagement:                          DEBUG
+    com.timesheetManagement.security.JwtAuthFilter:   DEBUG
+    # Spring Security (set to WARN to reduce noise; DEBUG for troubleshooting)
+    org.springframework.security:                     WARN
+    # Hibernate SQL (DEBUG to log queries, TRACE to log bind parameters)
+    org.hibernate.SQL:                                DEBUG
+    org.hibernate.orm.jdbc.bind:                      TRACE
+    # Connection pool
+    com.zaxxer.hikari:                                WARN
+    # Spring Web
+    org.springframework.web:                          WARN
+
+  pattern:
+    console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} %clr(%5p) %clr(${PID:- }){magenta} %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n%wEx"
+    file:    "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %-40.40logger{39} : %msg%n"
+
+  file:
+    name: logs/timesheetmanagement.log
+
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 30          # keep 30 days of rolled files
+      total-size-cap: 500MB
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
+
+
