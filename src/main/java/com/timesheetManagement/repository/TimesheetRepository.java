@@ -11,7 +11,6 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.time.LocalDate;
 import java.util.Optional;
 
 public interface TimesheetRepository
@@ -32,26 +31,18 @@ public interface TimesheetRepository
            """)
     Optional<Timesheet> findByIdWithEntries(@Param("id") Long id);
 
-    /**
-     * Manager filter: supports optional project, user, date-range, and status filters.
-     * Uses subqueries on entries so that date/project filters are entry-level.
+    /*
+     * filterTimesheets() has been removed.
+     *
+     * The previous JPQL query used "(:startDate IS NULL OR e.workDate >= :startDate)"
+     * which causes a PostgreSQL error: "could not determine data type of parameter $N"
+     * because PostgreSQL cannot infer the type of a NULL literal in a prepared statement.
+     *
+     * Replaced by TimesheetSpecification (JPA Criteria API) used via the inherited
+     * JpaSpecificationExecutor.findAll(Specification, Pageable) method.
+     * Criteria predicates are only added for non-null values, so no untyped NULLs
+     * are ever sent to PostgreSQL.
      */
-    @Query("""
-           SELECT DISTINCT t FROM Timesheet t
-           LEFT JOIN t.entries e
-           WHERE (:userId   IS NULL OR t.user.id  = :userId)
-           AND   (:status   IS NULL OR t.status   = :status)
-           AND   (:projectId IS NULL OR e.project.id = :projectId)
-           AND   (:startDate IS NULL OR e.workDate >= :startDate)
-           AND   (:endDate   IS NULL OR e.workDate <= :endDate)
-           """)
-    Page<Timesheet> filterTimesheets(
-            @Param("userId")    Long userId,
-            @Param("status")    TimesheetStatus status,
-            @Param("projectId") Long projectId,
-            @Param("startDate") LocalDate startDate,
-            @Param("endDate")   LocalDate endDate,
-            Pageable pageable);
 
     /**
      * Before deleting a user: delete all timesheets owned by the user.

@@ -3,10 +3,14 @@ package com.timesheetManagement.exception;
 import com.timesheetManagement.dto.ErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.jdbc.BadSqlGrammarException;
+import org.springframework.orm.jpa.JpaSystemException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.DisabledException;
@@ -276,7 +280,86 @@ public class GlobalExceptionHandler {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    //  5xx  SERVER ERRORS  (catch-all)
+    //  DATABASE / JPA ERRORS
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Handles SQL grammar errors — most commonly caused by PostgreSQL being
+     * unable to infer parameter types in JPQL "? IS NULL OR col = ?" patterns.
+     *
+     * Root cause: PSQLException "could not determine data type of parameter $N"
+     * Fix applied: TimesheetSpecification (Criteria API) removes null parameters
+     * entirely. This handler is a safety net for any residual raw JPQL queries.
+     */
+    @ExceptionHandler(BadSqlGrammarException.class)
+    public ResponseEntity<ErrorResponse> handleBadSqlGrammar(
+            BadSqlGrammarException ex, HttpServletRequest req) {
+
+        String errorId = UUID.randomUUID().toString();
+        log.error("[SQL_GRAMMAR_ERROR] errorId={} | {} {} → SQL={} | cause={}",
+                errorId, req.getMethod(), req.getRequestURI(),
+                ex.getSql(), rootMessage(ex));
+
+        return build(HttpStatus.INTERNAL_SERVER_ERROR,
+                "A database query error occurred. "
+                + "Please verify your filter parameters are valid. "
+                + "Reference errorId: " + errorId,
+                req, null);
+    }
+
+    /**
+     * Handles invalid JPA/JPQL API usage — e.g. sorting on a non-existent field
+     * name, or using an invalid Specification expression.
+     */
+    @ExceptionHandler(InvalidDataAccessApiUsageException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidDataAccessApiUsage(
+            InvalidDataAccessApiUsageException ex, HttpServletRequest req) {
+
+        log.warn("[INVALID_JPA_USAGE] {} {} → {}",
+                req.getMethod(), req.getRequestURI(), rootMessage(ex));
+        return build(HttpStatus.BAD_REQUEST,
+                "Invalid query parameter. Please check your filter or sort fields and try again.",
+                req, null);
+    }
+
+    /**
+     * Handles low-level JPA/Hibernate system failures not covered by more
+     * specific handlers above (e.g. connection timeout, dialect mismatch).
+     */
+    @ExceptionHandler(JpaSystemException.class)
+    public ResponseEntity<ErrorResponse> handleJpaSystem(
+            JpaSystemException ex, HttpServletRequest req) {
+
+        String errorId = UUID.randomUUID().toString();
+        log.error("[JPA_SYSTEM_ERROR] errorId={} | {} {} → {}",
+                errorId, req.getMethod(), req.getRequestURI(), rootMessage(ex), ex);
+
+        return build(HttpStatus.INTERNAL_SERVER_ERROR,
+                "A database system error occurred. Reference errorId: " + errorId,
+                req, null);
+    }
+
+    /**
+     * Broad catch-all for any remaining Spring DataAccessException subtypes
+     * (e.g. QueryTimeoutException, TransientDataAccessException).
+     * Must be declared AFTER all specific DataAccessException subclass handlers
+     * (DataIntegrityViolationException, BadSqlGrammarException, etc.).
+     */
+    @ExceptionHandler(DataAccessException.class)
+    public ResponseEntity<ErrorResponse> handleDataAccess(
+            DataAccessException ex, HttpServletRequest req) {
+
+        String errorId = UUID.randomUUID().toString();
+        log.error("[DATA_ACCESS_ERROR] errorId={} | {} {} → {}",
+                errorId, req.getMethod(), req.getRequestURI(), rootMessage(ex), ex);
+
+        return build(HttpStatus.INTERNAL_SERVER_ERROR,
+                "A database error occurred. Reference errorId: " + errorId,
+                req, null);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  5xx  SERVER ERRORS  (catch-all — must be LAST)
     // ══════════════════════════════════════════════════════════════════════
 
     @ExceptionHandler(Exception.class)

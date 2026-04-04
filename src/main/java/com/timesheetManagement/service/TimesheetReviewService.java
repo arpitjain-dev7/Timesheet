@@ -9,6 +9,7 @@ import com.timesheetManagement.exception.ForbiddenOperationException;
 import com.timesheetManagement.exception.InvalidTimesheetStateException;
 import com.timesheetManagement.exception.ResourceNotFoundException;
 import com.timesheetManagement.repository.TimesheetRepository;
+import com.timesheetManagement.repository.TimesheetSpecification;
 import com.timesheetManagement.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -88,6 +89,11 @@ public class TimesheetReviewService {
     // ══════════════════════════════════════════════════════════════════════
     //  FILTER TIMESHEETS FOR MANAGER
     //  Optional filters: projectId, userId, dateFrom, dateTo, status
+    //
+    //  Uses JPA Criteria API (TimesheetSpecification) instead of JPQL to avoid
+    //  the PostgreSQL "could not determine data type of parameter $N" error that
+    //  occurs when null values are passed to "(:param IS NULL OR col = :param)"
+    //  JPQL patterns in prepared statements.
     // ══════════════════════════════════════════════════════════════════════
     @Transactional(readOnly = true)
     public Page<TimesheetResponse> filterTimesheetsForManager(
@@ -101,8 +107,9 @@ public class TimesheetReviewService {
         log.debug("[TS_FILTER] projectId={}, userId={}, from={}, to={}, status={}",
                 projectId, userId, dateFrom, dateTo, status);
 
-        return timesheetRepository.filterTimesheets(
-                userId, status, projectId, dateFrom, dateTo, pageable)
+        return timesheetRepository.findAll(
+                        TimesheetSpecification.filter(userId, status, projectId, dateFrom, dateTo),
+                        pageable)
                 .map(timesheetService::toResponse);
     }
 
