@@ -227,39 +227,38 @@ public class ProjectController {
         return ResponseEntity.ok(projectService.updateProject(id, req));
     }
 
-    // ── GET /api/projects/{projectName}/users ─────────────────────────────
+    // ── GET /api/projects/{id}/users ──────────────────────────────────────
     @Operation(
-        summary     = "Get all users assigned to a project by project name",
+        summary     = "Get all users assigned to a project by project ID",
         description = """
-            Returns the list of users currently assigned to the project(s) with the given name.
+            Returns the list of users currently assigned to the project with the given ID.
             - Allowed roles: **ADMIN**, **MANAGER**
-            - The search is **case-insensitive** (e.g. `alpha` matches `Alpha`, `ALPHA`).
-            - If multiple projects share the same name, users from **all** of them are returned (deduplicated).
-            - Returns an empty list if the project exists but has no users assigned.
-            - Returns `404` if no project is found with the given name.
+            - Results are sorted by first name then last name.
+            - Returns an empty list if the project exists but has no users assigned yet.
+            - Returns `404` if no project is found with the given ID.
             """
     )
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "List of assigned users returned successfully"),
-        @ApiResponse(responseCode = "404", description = "No project found with the given name", content = @Content),
+        @ApiResponse(responseCode = "404", description = "No project found with the given ID", content = @Content),
         @ApiResponse(responseCode = "403", description = "Access denied — ADMIN or MANAGER role required", content = @Content)
     })
-    @GetMapping("/{projectName}/users")
+    @GetMapping("/{id}/users")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
-    public ResponseEntity<Map<String, Object>> getUsersByProjectName(
+    public ResponseEntity<Map<String, Object>> getUsersByProjectId(
             @Parameter(
-                description = "Name of the project (case-insensitive)",
-                example     = "Alpha Project",
+                description = "Unique ID of the project",
+                example     = "1",
                 required    = true)
-            @PathVariable String projectName) {
+            @PathVariable Long id) {
 
-        log.info("GET /api/projects/{}/users", projectName);
-        List<UserResponseDTO> users = projectService.getUsersByProjectName(projectName);
+        log.info("GET /api/projects/{}/users", id);
+        List<UserResponseDTO> users = projectService.getUsersByProjectId(id);
 
         return ResponseEntity.ok(Map.of(
-                "projectName", projectName,
-                "totalUsers",  users.size(),
-                "users",       users
+                "projectId",  id,
+                "totalUsers", users.size(),
+                "users",      users
         ));
     }
 

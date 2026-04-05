@@ -118,6 +118,31 @@ public class ProjectService {
                 .toList();
     }
 
+    // ── GET USERS BY PROJECT ID (ADMIN/MANAGER) ────────────────────────────
+    /**
+     * Returns all users assigned to the project with the given ID.
+     *
+     * @param projectId the unique ID of the project
+     * @return list of assigned users, sorted by first name then last name
+     * @throws ResourceNotFoundException if no project exists with that ID
+     */
+    @Transactional(readOnly = true)
+    public List<UserResponseDTO> getUsersByProjectId(Long projectId) {
+        log.debug("[PROJECT_USERS] Fetching users for projectId={}", projectId);
+
+        if (!projectRepository.existsById(projectId)) {
+            throw new ResourceNotFoundException(
+                    "No project found with id: " + projectId);
+        }
+
+        List<User> users = assignmentRepository.findUsersByProjectId(projectId);
+        log.info("[PROJECT_USERS] projectId={}, userCount={}", projectId, users.size());
+
+        return users.stream()
+                .map(this::toUserResponse)
+                .toList();
+    }
+
     // ── GET USERS BY PROJECT NAME (ADMIN/MANAGER) ──────────────────────────
     /**
      * Returns all users assigned to the project(s) matching the given name
