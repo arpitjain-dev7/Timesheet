@@ -26,6 +26,12 @@ public interface UserRepository extends JpaRepository<User, Long> {
     boolean existsByEmail(String email);
 
     /**
+     * Looks up a user by the SHA-256 hash of their password-reset token.
+     * The raw token is never stored — only the hash is persisted.
+     */
+    Optional<User> findByResetToken(String resetTokenHash);
+
+    /**
      * Returns a paginated list of users who do NOT hold any of the
      * specified roles (e.g. excludes ROLE_ADMIN and ROLE_MANAGER).
      * Used by the "Get All Users" API so managers/admins only see

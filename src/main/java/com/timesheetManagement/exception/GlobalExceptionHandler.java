@@ -232,6 +232,37 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.FORBIDDEN, ex.getMessage(), req, null);
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    //  FORGOT PASSWORD / OTP ERRORS
+    // ══════════════════════════════════════════════════════════════════════
+
+    // ── 410 · OTP expired ─────────────────────────────────────────────────
+    @ExceptionHandler(OtpExpiredException.class)
+    public ResponseEntity<ErrorResponse> handleOtpExpired(
+            OtpExpiredException ex, HttpServletRequest req) {
+
+        log.warn("[OTP_EXPIRED] {} {} → {}", req.getMethod(), req.getRequestURI(), ex.getMessage());
+        return build(HttpStatus.GONE, ex.getMessage(), req, null);
+    }
+
+    // ── 400 · Wrong OTP / locked account ──────────────────────────────────
+    @ExceptionHandler(OtpVerificationException.class)
+    public ResponseEntity<ErrorResponse> handleOtpVerification(
+            OtpVerificationException ex, HttpServletRequest req) {
+
+        log.warn("[OTP_VERIFICATION_FAILED] {} {} → {}", req.getMethod(), req.getRequestURI(), ex.getMessage());
+        return build(HttpStatus.BAD_REQUEST, ex.getMessage(), req, null);
+    }
+
+    // ── 400 · Invalid / expired / already-used reset token ────────────────
+    @ExceptionHandler(InvalidResetTokenException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidResetToken(
+            InvalidResetTokenException ex, HttpServletRequest req) {
+
+        log.warn("[INVALID_RESET_TOKEN] {} {} → {}", req.getMethod(), req.getRequestURI(), ex.getMessage());
+        return build(HttpStatus.BAD_REQUEST, ex.getMessage(), req, null);
+    }
+
     // ── 409 · DB unique constraint (fallback) ─────────────────────────────
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorResponse> handleDataIntegrity(

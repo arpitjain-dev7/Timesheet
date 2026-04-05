@@ -28,6 +28,13 @@ CREATE TABLE IF NOT EXISTS users (
     manager_email       VARCHAR(100),
     type_of_employment  VARCHAR(20),
     photo_path          TEXT,
+    -- ── Password reset / OTP fields ────────────────────────────────────────
+    reset_otp_hash          VARCHAR(64),          -- SHA-256 hex of the 6-digit OTP
+    reset_otp_expires_at    TIMESTAMP,            -- OTP validity window (issued_at + 10 min)
+    reset_otp_attempts      INT          NOT NULL DEFAULT 0, -- locked at 5
+    reset_otp_verified      BOOLEAN      NOT NULL DEFAULT FALSE,
+    reset_token             VARCHAR(128),         -- SHA-256 hex of the reset token
+    reset_token_expires_at  TIMESTAMP,            -- token validity window (verified_at + 15 min)
     created_at          TIMESTAMP,
     updated_at          TIMESTAMP
 );

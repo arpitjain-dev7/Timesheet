@@ -73,6 +73,37 @@ public class User {
     @Builder.Default
     private Set<Role> roles = new HashSet<>();
 
+    // ── Password reset / OTP fields ────────────────────────────────────────
+
+    /** SHA-256 hash of the 6-digit OTP — never store the raw OTP. */
+    @Column(name = "reset_otp_hash")
+    private String resetOtpHash;
+
+    /** When the OTP stops being valid (issued_at + 10 min). */
+    @Column(name = "reset_otp_expires_at")
+    private LocalDateTime resetOtpExpiresAt;
+
+    /** Incremented on every wrong OTP attempt; locked at 5. */
+    @Column(name = "reset_otp_attempts")
+    @Builder.Default
+    private int resetOtpAttempts = 0;
+
+    /** Flipped to true only after a correct OTP is provided. */
+    @Column(name = "reset_otp_verified")
+    @Builder.Default
+    private boolean resetOtpVerified = false;
+
+    /**
+     * SHA-256 hash of the short-lived reset token returned after OTP verification.
+     * The raw token is sent to the client only once and never persisted.
+     */
+    @Column(name = "reset_token", length = 128)
+    private String resetToken;
+
+    /** When the reset token expires (verified_at + 15 min). */
+    @Column(name = "reset_token_expires_at")
+    private LocalDateTime resetTokenExpiresAt;
+
     // ── Audit ──────────────────────────────────────────────────────────────
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
