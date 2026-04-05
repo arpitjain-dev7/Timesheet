@@ -83,7 +83,7 @@ public class ForgotPasswordService {
             // ── Rate-limit: block if an OTP was issued less than cooldownMinutes ago ──
             // Formula: otpExpiresAt = issuedAt + otpExpiryMinutes
             // => issuedAt = otpExpiresAt - otpExpiryMinutes
-            // => now < issuedAt + cooldownMinutes  ⟺  now < otpExpiresAt - (otpExpiryMinutes - cooldownMinutes)
+        // ── Rate-limit: block if an OTP was issued less than cooldownMinutes ago ──
             if (user.getResetOtpExpiresAt() != null
                     && LocalDateTime.now().isBefore(
                         user.getResetOtpExpiresAt()
@@ -99,7 +99,7 @@ public class ForgotPasswordService {
             user.setResetOtpHash(HashUtil.sha256(otp));
             user.setResetOtpExpiresAt(LocalDateTime.now().plusMinutes(otpExpiryMinutes));
             user.setResetOtpAttempts(0);
-            user.setResetOtpVerified(false);
+            user.setResetOtpVerified(Boolean.FALSE);
             user.setResetToken(null);            // clear any stale reset token
             user.setResetTokenExpiresAt(null);
             userRepository.save(user);
@@ -137,7 +137,7 @@ public class ForgotPasswordService {
         }
 
         // ── Account locked (too many wrong attempts) ──────────────────────
-        if (user.getResetOtpAttempts() >= maxOtpAttempts) {
+        if (safeAttempts(user) >= maxOtpAttempts) {
             throw new OtpVerificationException(
                     "Account is temporarily locked due to too many failed attempts. "
                     + "Please request a new OTP.");
@@ -151,7 +151,7 @@ public class ForgotPasswordService {
 
         // ── Wrong OTP — increment attempt counter ─────────────────────────
         if (!HashUtil.verify(req.getOtp(), user.getResetOtpHash())) {
-            int attempts  = user.getResetOtpAttempts() + 1;
+            int attempts  = safeAttempts(user) + 1;
             user.setResetOtpAttempts(attempts);
             userRepository.save(user);
 
@@ -172,7 +172,7 @@ public class ForgotPasswordService {
         String rawResetToken = UUID.randomUUID().toString().replace("-", "")
                              + UUID.randomUUID().toString().replace("-", "");
 
-        user.setResetOtpVerified(true);
+        user.setResetOtpVerified(Boolean.TRUE);
         user.setResetToken(HashUtil.sha256(rawResetToken));   // only hash persisted
         user.setResetTokenExpiresAt(LocalDateTime.now().plusMinutes(resetTokenExpiryMinutes));
         user.setResetOtpHash(null);                           // OTP consumed — prevent reuse
@@ -222,7 +222,7 @@ public class ForgotPasswordService {
                         "Invalid or expired reset token. Please request a new OTP."));
 
         // ── OTP must have been verified ───────────────────────────────────
-        if (!user.isResetOtpVerified()) {
+        if (!Boolean.TRUE.equals(user.getResetOtpVerified())) {
             throw new InvalidResetTokenException(
                     "OTP verification is required before resetting the password.");
         }
@@ -241,7 +241,7 @@ public class ForgotPasswordService {
         user.setResetOtpHash(null);
         user.setResetOtpExpiresAt(null);
         user.setResetOtpAttempts(0);
-        user.setResetOtpVerified(false);
+        user.setResetOtpVerified(Boolean.FALSE);
         user.setResetToken(null);
         user.setResetTokenExpiresAt(null);
         userRepository.save(user);
@@ -253,6 +253,19 @@ public class ForgotPasswordService {
     }
 
     // ── Private helpers ───────────────────────────────────────────────────
+
+    /**
+     * Returns the OTP attempt count, treating {@code null} as 0.
+     *
+     * <p>Existing users loaded from the DB before the reset columns were added
+     * will have {@code null} in {@code reset_otp_attempts}. Using a wrapper
+     * {@code Integer} field on the entity prevents Hibernate from throwing
+     * "Null value was assigned to a primitive type property", and this helper
+     * ensures the service logic never auto-unboxes a null.
+     */
+    private int safeAttempts(User user) {
+        return user.getResetOtpAttempts() != null ? user.getResetOtpAttempts() : 0;
+    }
 
     /** Masks an email address for safe logging (e.g. ar***@example.com). */
     private String maskEmail(String email) {

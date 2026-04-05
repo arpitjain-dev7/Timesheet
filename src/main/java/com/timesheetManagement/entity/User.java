@@ -83,15 +83,22 @@ public class User {
     @Column(name = "reset_otp_expires_at")
     private LocalDateTime resetOtpExpiresAt;
 
-    /** Incremented on every wrong OTP attempt; locked at 5. */
-    @Column(name = "reset_otp_attempts")
+    /**
+     * Incremented on every wrong OTP attempt; locked at 5.
+     * Nullable wrapper type so Hibernate can load NULL from existing rows
+     * that were created before these columns were added.
+     */
+    @Column(name = "reset_otp_attempts", columnDefinition = "INT DEFAULT 0")
     @Builder.Default
-    private int resetOtpAttempts = 0;
+    private Integer resetOtpAttempts = 0;
 
-    /** Flipped to true only after a correct OTP is provided. */
-    @Column(name = "reset_otp_verified")
+    /**
+     * Flipped to true only after a correct OTP is provided.
+     * Nullable wrapper type so Hibernate can load NULL from existing rows.
+     */
+    @Column(name = "reset_otp_verified", columnDefinition = "BOOLEAN DEFAULT FALSE")
     @Builder.Default
-    private boolean resetOtpVerified = false;
+    private Boolean resetOtpVerified = Boolean.FALSE;
 
     /**
      * SHA-256 hash of the short-lived reset token returned after OTP verification.
