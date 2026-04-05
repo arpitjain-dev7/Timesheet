@@ -4,6 +4,7 @@ import com.timesheetManagement.dto.ProjectAssignmentRequest;
 import com.timesheetManagement.dto.ProjectCreateRequest;
 import com.timesheetManagement.dto.ProjectResponse;
 import com.timesheetManagement.dto.ProjectUpdateRequest;
+import com.timesheetManagement.dto.UserResponseDTO;
 import com.timesheetManagement.service.ProjectService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -224,6 +225,42 @@ public class ProjectController {
             @Valid @RequestBody ProjectUpdateRequest req) {
         log.info("PUT /api/projects/{} → {}", id, req);
         return ResponseEntity.ok(projectService.updateProject(id, req));
+    }
+
+    // ── GET /api/projects/{projectName}/users ─────────────────────────────
+    @Operation(
+        summary     = "Get all users assigned to a project by project name",
+        description = """
+            Returns the list of users currently assigned to the project(s) with the given name.
+            - Allowed roles: **ADMIN**, **MANAGER**
+            - The search is **case-insensitive** (e.g. `alpha` matches `Alpha`, `ALPHA`).
+            - If multiple projects share the same name, users from **all** of them are returned (deduplicated).
+            - Returns an empty list if the project exists but has no users assigned.
+            - Returns `404` if no project is found with the given name.
+            """
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "List of assigned users returned successfully"),
+        @ApiResponse(responseCode = "404", description = "No project found with the given name", content = @Content),
+        @ApiResponse(responseCode = "403", description = "Access denied — ADMIN or MANAGER role required", content = @Content)
+    })
+    @GetMapping("/{projectName}/users")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public ResponseEntity<Map<String, Object>> getUsersByProjectName(
+            @Parameter(
+                description = "Name of the project (case-insensitive)",
+                example     = "Alpha Project",
+                required    = true)
+            @PathVariable String projectName) {
+
+        log.info("GET /api/projects/{}/users", projectName);
+        List<UserResponseDTO> users = projectService.getUsersByProjectName(projectName);
+
+        return ResponseEntity.ok(Map.of(
+                "projectName", projectName,
+                "totalUsers",  users.size(),
+                "users",       users
+        ));
     }
 
     // ── DELETE /api/projects/{id} ─────────────────────────────────────────

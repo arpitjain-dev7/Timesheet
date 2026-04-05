@@ -17,6 +17,9 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
 
     boolean existsByCode(String code);
 
+    /** Case-insensitive name existence check — used before querying users by project name. */
+    boolean existsByNameIgnoreCase(String name);
+
     /** Used by users to see only projects they can log time against. */
     Page<Project> findAllByActiveTrue(Pageable pageable);
 

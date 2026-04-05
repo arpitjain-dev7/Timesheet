@@ -4,6 +4,7 @@ import com.timesheetManagement.dto.ProjectAssignmentRequest;
 import com.timesheetManagement.dto.ProjectCreateRequest;
 import com.timesheetManagement.dto.ProjectResponse;
 import com.timesheetManagement.dto.ProjectUpdateRequest;
+import com.timesheetManagement.dto.UserResponseDTO;
 import com.timesheetManagement.entity.Project;
 import com.timesheetManagement.entity.ProjectAssignment;
 import com.timesheetManagement.entity.User;
@@ -117,6 +118,33 @@ public class ProjectService {
                 .toList();
     }
 
+    // ── GET USERS BY PROJECT NAME (ADMIN/MANAGER) ──────────────────────────
+    /**
+     * Returns all users assigned to the project(s) matching the given name
+     * (case-insensitive). If multiple projects share the same name, users
+     * from all of them are returned (deduplicated).
+     *
+     * @param projectName the project name to look up
+     * @return list of assigned users, sorted by first name then last name
+     * @throws ResourceNotFoundException if no project exists with that name
+     */
+    @Transactional(readOnly = true)
+    public List<UserResponseDTO> getUsersByProjectName(String projectName) {
+        log.debug("[PROJECT_USERS] Fetching users for projectName='{}'", projectName);
+
+        if (!projectRepository.existsByNameIgnoreCase(projectName)) {
+            throw new ResourceNotFoundException(
+                    "No project found with name: '" + projectName + "'");
+        }
+
+        List<User> users = assignmentRepository.findUsersByProjectName(projectName);
+        log.info("[PROJECT_USERS] projectName='{}', userCount={}", projectName, users.size());
+
+        return users.stream()
+                .map(this::toUserResponse)
+                .toList();
+    }
+
     // ── GET ALL PROJECTS (paginated, ADMIN/MANAGER) ────────────────────────
     @Transactional(readOnly = true)
     public Page<ProjectResponse> getAllProjects(boolean activeOnly, Pageable pageable) {
@@ -194,6 +222,27 @@ public class ProjectService {
     }
 
     // ── Private helpers ───────────────────────────────────────────────────
+    private UserResponseDTO toUserResponse(User user) {
+        return UserResponseDTO.builder()
+                .id(user.getId())
+                .firstName(user.getFirstName())
+                .lastName(user.getLastName())
+                .username(user.getUsername())
+                .email(user.getEmail())
+                .gender(user.getGender())
+                .location(user.getLocation())
+                .designation(user.getDesignation())
+                .managerEmail(user.getManagerEmail())
+                .typeOfEmployment(user.getTypeOfEmployment())
+                .photoUrl(user.getPhotoPath())
+                .roles(user.getRoles().stream()
+                        .map(r -> r.getName().name())
+                        .toList())
+                .createdAt(user.getCreatedAt())
+                .updatedAt(user.getUpdatedAt())
+                .build();
+    }
+
     private User findUser(String username) {
         return userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException(

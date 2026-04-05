@@ -31,6 +31,20 @@ public interface ProjectAssignmentRepository extends JpaRepository<ProjectAssign
     boolean existsByProjectIdAndUserId(Long projectId, Long userId);
 
     /**
+     * Returns all distinct users assigned to any project whose name matches
+     * the given value (case-insensitive). Ordered by first name then last name.
+     *
+     * <p>If multiple projects share the same name, users from all of them
+     * are included (duplicates eliminated by DISTINCT).
+     */
+    @Query("""
+           SELECT DISTINCT pa.user FROM ProjectAssignment pa
+           WHERE LOWER(pa.project.name) = LOWER(:projectName)
+           ORDER BY pa.user.firstName ASC, pa.user.lastName ASC
+           """)
+    List<User> findUsersByProjectName(@Param("projectName") String projectName);
+
+    /**
      * Before deleting a user: remove every assignment where the user
      * is the assignee (user_id column).
      */
