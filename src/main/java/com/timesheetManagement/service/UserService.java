@@ -262,11 +262,16 @@ public class UserService {
             throw new IllegalArgumentException("New password and confirm password do not match");
         }
 
-        // 4. Encode and persist the new password
+        // 4. Encode and immediately persist the new password
+        //    saveAndFlush forces the UPDATE to reach the DB right now (within this
+        //    transaction) before any subsequent @Modifying query can disrupt the
+        //    persistence-context flush cycle and silently drop the password change.
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
-        userRepository.save(user);
+        userRepository.saveAndFlush(user);
 
         // 5. Invalidate all refresh tokens so existing sessions are forced to re-login
+        //    Runs AFTER the password is already in the DB, so a failure here cannot
+        //    corrupt the password that was just saved.
         refreshTokenRepository.deleteByUser(user);
 
         log.info("[CHANGE_PASSWORD] ✅ Password changed successfully for username='{}'", username);
