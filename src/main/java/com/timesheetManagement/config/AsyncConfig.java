@@ -1,22 +1,28 @@
 package com.timesheetManagement.config;
 
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
+import java.util.Arrays;
 import java.util.concurrent.Executor;
 
 /**
- * Enables Spring's @Async support and configures a dedicated thread pool
- * for background tasks such as email sending.
+ * Enables Spring @Async and registers the dedicated email thread pool.
  *
- * Using a dedicated pool prevents email I/O from consuming threads that
- * serve HTTP requests.
+ * <p>Implements {@link AsyncConfigurer} so the {@code emailTaskExecutor} bean
+ * is also the default executor used when {@code @Async} is used without a
+ * specific executor name. This prevents the "no qualifying bean of type
+ * Executor" startup error and ensures all @Async tasks go to the right pool.
  */
 @Configuration
 @EnableAsync
-public class AsyncConfig {
+@Slf4j
+public class AsyncConfig implements AsyncConfigurer {
 
     /**
      * Thread pool used by @Async methods (e.g. EmailService.sendHtmlEmail).
@@ -32,7 +38,31 @@ public class AsyncConfig {
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(10);
         executor.initialize();
+        log.info("[ASYNC_CONFIG] emailTaskExecutor initialized — " +
+                 "corePoolSize=2, maxPoolSize=5, queueCapacity=100, threadPrefix=email-async-");
         return executor;
     }
-}
 
+    /**
+     * Makes emailTaskExecutor the default executor for all {@code @Async} methods
+     * that do not specify an executor name.
+     */
+    @Override
+    public Executor getAsyncExecutor() {
+        return emailTaskExecutor();
+    }
+
+    /**
+     * Catches any unchecked exception that escapes an {@code @Async} method
+     * (i.e. is NOT caught inside the method's own try-catch). Without this,
+     * such exceptions are silently discarded by Spring.
+     */
+    @Override
+    public AsyncUncaughtExceptionHandler getAsyncUncaughtExceptionHandler() {
+        return (ex, method, params) ->
+                log.error("[ASYNC_UNCAUGHT] Exception in async method '{}' with params {}: {}",
+                        method.getName(),
+                        Arrays.toString(params),
+                        ex.getMessage(), ex);
+    }
+}

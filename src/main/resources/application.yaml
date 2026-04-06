@@ -10,7 +10,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: create-drop  # Use 'update' or 'validate' in production
     show-sql: false          # SQL logged via Hibernate category below
     open-in-view: false
     properties:
@@ -68,6 +68,10 @@ app:
     reset-token-expiry-minutes: 15  # Reset token is valid for 15 minutes after OTP verification
     max-attempts: 5             # Lock after 5 failed OTP attempts
     cooldown-minutes: 2         # Minimum gap between successive OTP requests
+
+  # ── Frontend URL injected into welcome email "Log In Now" button ────────
+  frontend:
+    login-url: ${FRONTEND_LOGIN_URL:http://localhost:5173/login}
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging:

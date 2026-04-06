@@ -1,5 +1,6 @@
 package com.timesheetManagement.service;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
@@ -34,8 +35,48 @@ public class EmailService {
     @Value("${spring.mail.username}")
     private String fromAddress;
 
+    @Value("${spring.mail.host:smtp.gmail.com}")
+    private String mailHost;
+
+    @Value("${spring.mail.port:587}")
+    private int mailPort;
+
     @Value("${app.frontend.login-url:http://localhost:5173/login}")
     private String loginUrl;
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  STARTUP VALIDATION
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Validates the email configuration and templates at application startup.
+     * Any error here surfaces immediately in the console — before the first
+     * user creation is attempted.
+     */
+    @PostConstruct
+    public void validateEmailSetup() {
+        log.info("╔══════════════════════════════════════════════════════════╗");
+        log.info("║            EMAIL SERVICE — STARTUP CHECK                ║");
+        log.info("╠══════════════════════════════════════════════════════════╣");
+        log.info("║  SMTP Host   : {}:{}", mailHost, mailPort);
+        log.info("║  From        : {}", fromAddress);
+        log.info("║  Login URL   : {}", loginUrl);
+        log.info("╚══════════════════════════════════════════════════════════╝");
+
+        // Verify both templates are loadable from classpath
+        checkTemplate("welcome-email.html");
+        checkTemplate("forgot-password-otp.html");
+    }
+
+    private void checkTemplate(String name) {
+        try {
+            String content = loadTemplate(name);
+            log.info("[EMAIL_SETUP] ✅ Template '{}' loaded OK ({} bytes)", name, content.length());
+        } catch (Exception e) {
+            log.error("[EMAIL_SETUP] ❌ Template '{}' FAILED to load — rebuild the project! Error: {}",
+                    name, e.getMessage());
+        }
+    }
 
     // ══════════════════════════════════════════════════════════════════════
     //  WELCOME EMAIL — sent after every new user creation
@@ -43,30 +84,26 @@ public class EmailService {
 
     /**
      * Sends a branded welcome email with the new user's login credentials.
-     *
-     * <p>Runs on the {@code emailTaskExecutor} thread pool so it never blocks
-     * the HTTP response. All exceptions are caught and logged — email failure
-     * must not roll back the user-creation transaction.
+     * Runs asynchronously on the emailTaskExecutor thread pool.
      *
      * @param to        recipient email address
-     * @param fullName  user's first + last name for personalisation
+     * @param fullName  user's first + last name
      * @param username  assigned login username
-     * @param password  <em>plaintext</em> temporary password (captured by the
-     *                  caller before {@code BCryptPasswordEncoder.encode()})
-     * @param role      display-friendly role string (e.g. "User", "Manager")
+     * @param password  plaintext temporary password (before BCrypt encoding)
+     * @param role      display-friendly role (e.g. "User", "Manager")
      */
-    @Async("emailTaskExecutor")
+    @Async
     public void sendWelcomeEmail(String to,
                                   String fullName,
                                   String username,
                                   String password,
                                   String role) {
 
-        log.info("[WELCOME_EMAIL] ▶ Preparing welcome email — username='{}', to='{}'",
-                username, maskEmail(to));
+        log.info("[WELCOME_EMAIL] ▶ START — thread='{}', username='{}', to='{}'",
+                Thread.currentThread().getName(), username, maskEmail(to));
         try {
-            // ── 1. Load & populate template ───────────────────────────────
-            log.debug("[WELCOME_EMAIL] Loading template 'welcome-email.html'");
+            // ── 1. Load & render template ─────────────────────────────────
+            log.info("[WELCOME_EMAIL] Step 1/3 — Loading template...");
             String html = loadTemplate("welcome-email.html")
                     .replace("{{FULL_NAME}}", fullName  != null ? fullName  : username)
                     .replace("{{EMAIL}}",     to)
@@ -74,32 +111,35 @@ public class EmailService {
                     .replace("{{PASSWORD}}",  password  != null ? password  : "")
                     .replace("{{ROLE}}",      role      != null ? role      : "User")
                     .replace("{{LOGIN_URL}}", loginUrl);
-            log.debug("[WELCOME_EMAIL] Template rendered successfully ({} chars)", html.length());
+            log.info("[WELCOME_EMAIL] Step 1/3 — Template rendered ({} chars) ✓", html.length());
 
-            // ── 2. Build MIME message ─────────────────────────────────────
+            // ── 2. Build MIME message ──────────────────────────────────────
+            log.info("[WELCOME_EMAIL] Step 2/3 — Building MIME message...");
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
             helper.setFrom(fromAddress);
             helper.setTo(to);
             helper.setSubject("Welcome to Timesheet Management — Your Account Details");
             helper.setText(html, true);
-            log.debug("[WELCOME_EMAIL] MIME message built — from='{}', to='{}'",
+            log.info("[WELCOME_EMAIL] Step 2/3 — MIME message built (from={}, to={}) ✓",
                     fromAddress, maskEmail(to));
 
-            // ── 3. Send ───────────────────────────────────────────────────
-            log.info("[WELCOME_EMAIL] Sending via SMTP to '{}'...", maskEmail(to));
+            // ── 3. Send via SMTP ───────────────────────────────────────────
+            log.info("[WELCOME_EMAIL] Step 3/3 — Connecting to SMTP {}:{}...", mailHost, mailPort);
             mailSender.send(message);
-            log.info("[WELCOME_EMAIL] ✅ Welcome email sent successfully to '{}'", maskEmail(to));
+            log.info("[WELCOME_EMAIL] ✅ SUCCESS — Welcome email delivered to '{}'", maskEmail(to));
 
         } catch (MessagingException e) {
-            log.error("[WELCOME_EMAIL] ❌ SMTP/messaging error sending to '{}': {}",
+            log.error("[WELCOME_EMAIL] ❌ SMTP ERROR — Could not send to '{}'. " +
+                      "Check SMTP host/port/credentials in application.yaml. Error: {}",
                     maskEmail(to), e.getMessage(), e);
         } catch (IllegalStateException e) {
-            log.error("[WELCOME_EMAIL] ❌ Template error for '{}': {}",
+            log.error("[WELCOME_EMAIL] ❌ TEMPLATE ERROR — '{}'. " +
+                      "Rebuild the project: mvnw compile. Error: {}",
                     maskEmail(to), e.getMessage(), e);
         } catch (Exception e) {
-            log.error("[WELCOME_EMAIL] ❌ Unexpected error sending welcome email to '{}': {}",
-                    maskEmail(to), e.getClass().getSimpleName() + " — " + e.getMessage(), e);
+            log.error("[WELCOME_EMAIL] ❌ UNEXPECTED ERROR — to='{}', type={}, message={}",
+                    maskEmail(to), e.getClass().getSimpleName(), e.getMessage(), e);
         }
     }
 
@@ -109,58 +149,47 @@ public class EmailService {
 
     /**
      * Sends a 6-digit OTP to the user's email for the forgot-password flow.
-     *
-     * @param to            recipient email
-     * @param firstName     used to personalise the greeting line
-     * @param otp           plaintext OTP (already hashed + stored before this call)
-     * @param expiryMinutes validity window shown in the email body
      */
-    @Async("emailTaskExecutor")
+    @Async
     public void sendOtpEmail(String to, String firstName, String otp, int expiryMinutes) {
 
-        log.info("[OTP_EMAIL] ▶ Preparing OTP email for '{}'", maskEmail(to));
+        log.info("[OTP_EMAIL] ▶ START — thread='{}', to='{}'",
+                Thread.currentThread().getName(), maskEmail(to));
         try {
-            // ── 1. Load & populate template ───────────────────────────────
-            log.debug("[OTP_EMAIL] Loading template 'forgot-password-otp.html'");
+            log.info("[OTP_EMAIL] Step 1/3 — Loading template...");
             String html = loadTemplate("forgot-password-otp.html")
                     .replace("{{FIRST_NAME}}",     firstName != null ? firstName : "User")
                     .replace("{{OTP}}",             otp)
                     .replace("{{EXPIRY_MINUTES}}", String.valueOf(expiryMinutes));
-            log.debug("[OTP_EMAIL] Template rendered ({} chars)", html.length());
+            log.info("[OTP_EMAIL] Step 1/3 — Template rendered ({} chars) ✓", html.length());
 
-            // ── 2. Build MIME message ─────────────────────────────────────
+            log.info("[OTP_EMAIL] Step 2/3 — Building MIME message...");
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
             helper.setFrom(fromAddress);
             helper.setTo(to);
             helper.setSubject("Your Password Reset OTP — Timesheet Management");
             helper.setText(html, true);
+            log.info("[OTP_EMAIL] Step 2/3 — MIME message built ✓");
 
-            // ── 3. Send ───────────────────────────────────────────────────
-            log.info("[OTP_EMAIL] Sending OTP via SMTP to '{}'...", maskEmail(to));
+            log.info("[OTP_EMAIL] Step 3/3 — Sending via SMTP {}:{}...", mailHost, mailPort);
             mailSender.send(message);
-            log.info("[OTP_EMAIL] ✅ OTP email sent successfully to '{}'", maskEmail(to));
+            log.info("[OTP_EMAIL] ✅ SUCCESS — OTP email delivered to '{}'", maskEmail(to));
 
         } catch (MessagingException e) {
-            log.error("[OTP_EMAIL] ❌ SMTP/messaging error sending to '{}': {}",
-                    maskEmail(to), e.getMessage(), e);
+            log.error("[OTP_EMAIL] ❌ SMTP ERROR — to='{}': {}", maskEmail(to), e.getMessage(), e);
         } catch (IllegalStateException e) {
-            log.error("[OTP_EMAIL] ❌ Template error for '{}': {}",
-                    maskEmail(to), e.getMessage(), e);
+            log.error("[OTP_EMAIL] ❌ TEMPLATE ERROR — to='{}': {}", maskEmail(to), e.getMessage(), e);
         } catch (Exception e) {
-            log.error("[OTP_EMAIL] ❌ Unexpected error sending OTP email to '{}': {}",
-                    maskEmail(to), e.getClass().getSimpleName() + " — " + e.getMessage(), e);
+            log.error("[OTP_EMAIL] ❌ UNEXPECTED ERROR — to='{}', {}: {}",
+                    maskEmail(to), e.getClass().getSimpleName(), e.getMessage(), e);
         }
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    //  GENERIC HELPER — for ad-hoc one-off emails (future use)
+    //  GENERIC HELPER
     // ══════════════════════════════════════════════════════════════════════
 
-    /**
-     * Sends a plain HTML email synchronously (caller manages async if needed).
-     * Prefer the domain-specific methods above for standard flows.
-     */
     public void sendHtmlEmail(String to, String subject, String htmlContent) {
         log.info("[EMAIL] Sending '{}' to '{}'", subject, maskEmail(to));
         try {
@@ -182,33 +211,20 @@ public class EmailService {
     //  PRIVATE HELPERS
     // ══════════════════════════════════════════════════════════════════════
 
-    /**
-     * Loads an HTML template from {@code src/main/resources/templates/}.
-     *
-     * @param templateName file name, e.g. {@code "welcome-email.html"}
-     * @return raw HTML string with {@code {{PLACEHOLDER}}} tokens intact
-     * @throws IllegalStateException if the file is missing or cannot be read
-     */
     private String loadTemplate(String templateName) {
         String path = "templates/" + templateName;
-        log.debug("[EMAIL_TEMPLATE] Loading classpath resource: {}", path);
         try (InputStream is = getClass().getClassLoader().getResourceAsStream(path)) {
             if (is == null) {
                 throw new IllegalStateException(
-                        "Email template not found on classpath: " + path
-                        + " — ensure the file exists in src/main/resources/templates/ "
-                        + "and the application has been rebuilt/restarted.");
+                        "Template not found on classpath: " + path
+                        + " — rebuild with: mvnw compile");
             }
-            String content = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            log.debug("[EMAIL_TEMPLATE] Loaded '{}' ({} bytes)", templateName, content.length());
-            return content;
+            return new String(is.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
-            throw new IllegalStateException(
-                    "Failed to read email template: " + path, e);
+            throw new IllegalStateException("Failed to read template: " + path, e);
         }
     }
 
-    /** Masks an email for safe logging: {@code arpit@example.com} → {@code ar***@example.com} */
     private String maskEmail(String email) {
         if (email == null || !email.contains("@")) return "***";
         String[] parts = email.split("@", 2);
