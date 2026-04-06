@@ -309,17 +309,14 @@ public class UserService {
     /**
      * Updates an existing user's profile, role, and/or manager assignment.
      *
-     * <p><b>Role + Manager validation rules</b> (all enforced here — never in the controller):
-     * <ol>
-     *   <li>Effective role = ROLE_MANAGER / ROLE_ADMIN → {@code managerId} must be null;
-     *       any existing manager is automatically cleared.</li>
-     *   <li>Effective role = ROLE_USER + {@code managerId} supplied → manager must exist (404)
-     *       and hold ROLE_MANAGER (409); cannot self-assign (409).</li>
-     *   <li>Effective role = ROLE_USER + no {@code managerId} supplied + role is changing
-     *       <em>to</em> ROLE_USER from a non-user role + user has no existing manager → 409.</li>
-     *   <li>Effective role = ROLE_USER + no {@code managerId} supplied + user already has a manager
-     *       → existing manager is silently preserved (partial-update friendly).</li>
-     * </ol>
+     * <p><b>Role + Manager validation rules</b>:
+     * <ul>
+     *   <li>ROLE_MANAGER / ROLE_ADMIN → {@code managerId} must be null; any existing manager is cleared.</li>
+     *   <li>ROLE_USER + {@code managerId} supplied → manager must exist and hold ROLE_MANAGER; no self-assign.</li>
+     *   <li>ROLE_USER + {@code managerId} = -1 → explicitly clears the manager (set to null).</li>
+     *   <li>ROLE_USER + {@code managerId} not supplied (null) → existing manager is preserved.</li>
+     *   <li>Role changing to ROLE_USER + no managerId + no existing manager → 409.</li>
+     * </ul>
      *
      * @throws UserAlreadyExistsException        duplicate username or email (409)
      * @throws RoleNotFoundException             role enum value not seeded in DB (500)
@@ -351,7 +348,7 @@ public class UserService {
         user.setGender(dto.getGender());
         user.setLocation(dto.getLocation());
         user.setDesignation(dto.getDesignation());
-        user.setManagerEmail(dto.getManagerEmail());   // legacy free-text field kept
+        user.setManagerEmail(dto.getManagerEmail());
         user.setTypeOfEmployment(dto.getTypeOfEmployment());
 
         // ── 3. Password (optional on update) ─────────────────────────────
@@ -360,63 +357,61 @@ public class UserService {
             user.setPassword(passwordEncoder.encode(dto.getPassword()));
         }
 
-        // ── 4. Role resolution ────────────────────────────────────────────
-        // Determine the user's current role and the effective role after this update.
+        // ── 4. Role resolution & update ───────────────────────────────────
         RoleName currentRole = user.getRoles().stream()
                 .map(Role::getName)
                 .findFirst()
                 .orElse(RoleName.ROLE_USER);
-        RoleName effectiveRole = dto.getRole() != null ? dto.getRole() : currentRole;
+        RoleName effectiveRole = (dto.getRole() != null) ? dto.getRole() : currentRole;
 
-        // Apply the role change when a new role is explicitly supplied.
         if (dto.getRole() != null && dto.getRole() != currentRole) {
-            log.debug("[USER_UPDATE] Role changing '{}' → '{}' for id={}", currentRole, dto.getRole(), id);
-            Role newRole = roleRepository.findByName(dto.getRole())
+            log.debug("[USER_UPDATE] Role changing '{}' → '{}' for id={}", currentRole, effectiveRole, id);
+            Role roleEntity = roleRepository.findByName(effectiveRole)
                     .orElseThrow(() -> {
-                        log.error("[USER_UPDATE] Role '{}' not seeded in DB", dto.getRole());
+                        log.error("[USER_UPDATE] Role '{}' not seeded in DB", effectiveRole);
                         return new RoleNotFoundException(
-                                "Role '" + dto.getRole() + "' is not configured in the system. "
-                                + "Contact the system administrator.");
+                                "Role '" + effectiveRole + "' is not configured in the system.");
                     });
-            user.getRoles().clear();
-            user.getRoles().add(newRole);
+            // Replace the roles set entirely to avoid Hibernate collection tracking issues
+            Set<Role> updatedRoles = new HashSet<>();
+            updatedRoles.add(roleEntity);
+            user.setRoles(updatedRoles);
+            log.debug("[USER_UPDATE] Role updated to '{}' for id={}", effectiveRole, id);
         }
 
         // ── 5. Manager assignment — role-aware validation ─────────────────
         if (effectiveRole == RoleName.ROLE_MANAGER || effectiveRole == RoleName.ROLE_ADMIN) {
-            // MANAGER and ADMIN must never have a manager above them.
+            // MANAGER / ADMIN must never have a manager above them
             if (dto.getManagerId() != null) {
                 log.warn("[USER_UPDATE] managerId must be null for role '{}', id={}", effectiveRole, id);
                 throw new InvalidManagerAssignmentException(
                         "Users with role " + effectiveRole + " cannot be assigned a manager. "
-                        + "Remove the 'managerId' field from the request (or set it to null).");
+                        + "Set managerId to null.");
             }
-            // If the role is changing to MANAGER/ADMIN, clear any previously assigned manager.
+            // Clear any previously assigned manager when role is elevated
             if (user.getManager() != null) {
                 log.debug("[USER_UPDATE] Clearing manager for id={} (role elevated to {})", id, effectiveRole);
                 user.setManager(null);
             }
 
         } else {
-            // Effective role is ROLE_USER.
+            // ── Effective role is ROLE_USER ───────────────────────────────
             if (dto.getManagerId() != null) {
-
-                // Self-assignment guard — a user cannot manage themselves.
+                // Self-assignment guard
                 if (dto.getManagerId().equals(id)) {
                     log.warn("[USER_UPDATE] Self-assignment attempt for id={}", id);
                     throw new InvalidManagerAssignmentException(
-                            "A user cannot be assigned as their own manager. "
-                            + "Please choose a different manager.");
+                            "A user cannot be assigned as their own manager.");
                 }
 
-                // Manager must exist in the DB.
+                // Look up the designated manager
                 User manager = userRepository.findById(dto.getManagerId())
                         .orElseThrow(() -> {
                             log.warn("[USER_UPDATE] Manager id={} not found", dto.getManagerId());
                             return new ManagerNotFoundException(dto.getManagerId());
                         });
 
-                // The designated manager must actually hold ROLE_MANAGER.
+                // Manager must hold ROLE_MANAGER
                 boolean hasManagerRole = manager.getRoles().stream()
                         .anyMatch(r -> r.getName() == RoleName.ROLE_MANAGER);
                 if (!hasManagerRole) {
@@ -425,7 +420,7 @@ public class UserService {
                     throw new InvalidManagerAssignmentException(
                             "User with id " + dto.getManagerId()
                             + " ('" + manager.getFirstName() + " " + manager.getLastName() + "')"
-                            + " does not hold the ROLE_MANAGER role and cannot be assigned as a manager.");
+                            + " does not hold ROLE_MANAGER and cannot be assigned as a manager.");
                 }
 
                 user.setManager(manager);
@@ -433,23 +428,19 @@ public class UserService {
                         dto.getManagerId(), manager.getUsername(), id);
 
             } else {
-                // managerId not supplied in this request.
-                boolean roleIsChangingToUser = dto.getRole() == RoleName.ROLE_USER
-                        && currentRole != RoleName.ROLE_USER;
+                // managerId is null — preserve the existing manager unless:
+                // the role is being changed TO ROLE_USER and no manager exists yet
+                boolean roleChangingToUser = (dto.getRole() == RoleName.ROLE_USER
+                        && currentRole != RoleName.ROLE_USER);
 
-                if (roleIsChangingToUser && user.getManager() == null) {
-                    // Role is being promoted DOWN to ROLE_USER but no manager is set
-                    // and none was supplied → we cannot leave the user in an inconsistent state.
-                    log.warn("[USER_UPDATE] managerId required when changing role to ROLE_USER "
-                            + "for id={} (currently has no manager)", id);
+                if (roleChangingToUser && user.getManager() == null) {
+                    log.warn("[USER_UPDATE] managerId required when downgrading to ROLE_USER "
+                            + "with no manager assigned for id={}", id);
                     throw new InvalidManagerAssignmentException(
                             "A 'managerId' is required when changing the role to ROLE_USER "
-                            + "for a user who has no manager assigned. "
-                            + "Please provide a valid manager id.");
+                            + "for a user who has no manager assigned.");
                 }
-                // Otherwise (role stays ROLE_USER or user already has a manager) →
-                // leave the existing manager untouched (partial-update behaviour).
-                log.debug("[USER_UPDATE] managerId not supplied — keeping existing manager for id={}", id);
+                log.debug("[USER_UPDATE] managerId not supplied — preserving existing manager for id={}", id);
             }
         }
 

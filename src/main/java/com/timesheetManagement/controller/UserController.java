@@ -98,20 +98,35 @@ public class UserController {
         ));
     }
 
-    // ── PUT /api/user/{id} ────────────────────────────────────────────────
-    @Operation(summary = "Update a user's profile",
+    // ── PUT /api/user/{id} — multipart (with optional photo) ─────────────
+    @Operation(summary = "Update a user's profile (with optional photo)",
                description = "Send as multipart/form-data with two named parts:\n" +
                              "• **dto**   — JSON part (Content-Type: application/json) with profile fields.\n" +
                              "• **photo** — (optional) image file part.\n" +
-                             "Leave password blank in dto to keep the existing password.")
+                             "Leave password blank in dto to keep the existing password.\n" +
+                             "To update **without** a photo, use the plain-JSON variant of this endpoint.")
     @PutMapping(value = "/{id}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAnyRole('USER','ADMIN')")
+    @PreAuthorize("hasAnyRole('USER','MANAGER','ADMIN')")
     public ResponseEntity<UserResponseDTO> updateUser(
             @PathVariable Long id,
             @Valid @RequestPart("dto") UserRequestDTO dto,
             @RequestPart(value = "photo", required = false) MultipartFile photo) {
-        log.info("PUT /api/user/{}", id);
+        log.info("PUT /api/user/{} (multipart)", id);
         return ResponseEntity.ok(userService.updateUser(id, dto, photo));
+    }
+
+    // ── PUT /api/user/{id} — JSON only (no photo) ─────────────────────────
+    @Operation(summary = "Update a user's profile (JSON body — no photo)",
+               description = "Send as application/json. All profile fields including role and managerId are accepted.\n" +
+                             "Use the multipart variant if you also need to upload/replace the profile photo.\n" +
+                             "Leave password blank to keep the existing password.")
+    @PutMapping(value = "/{id}", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @PreAuthorize("hasAnyRole('USER','MANAGER','ADMIN')")
+    public ResponseEntity<UserResponseDTO> updateUserJson(
+            @PathVariable Long id,
+            @Valid @RequestBody UserRequestDTO dto) {
+        log.info("PUT /api/user/{} (JSON)", id);
+        return ResponseEntity.ok(userService.updateUser(id, dto, null));
     }
 
     // ── DELETE /api/user/{id} ─────────────────────────────────────────────

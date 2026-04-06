@@ -2,6 +2,7 @@ package com.timesheetManagement.controller;
 
 import com.timesheetManagement.dto.CreateUserRequest;
 import com.timesheetManagement.dto.ManagerResponse;
+import com.timesheetManagement.dto.UserRequestDTO;
 import com.timesheetManagement.dto.UserResponseDTO;
 import com.timesheetManagement.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -13,24 +14,27 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
 /**
  * Endpoints under {@code /api/users} (plural) that handle manager-aware
- * user creation and the managers dropdown.
+ * user creation, the managers dropdown, and a PUT alias for user updates.
  *
- * <p>Kept separate from {@link UserController} ({@code /api/user}) so the
- * two path namespaces stay clean and the existing endpoints are untouched.
+ * <p>The update endpoints are an alias for {@code PUT /api/user/{id}}
+ * (singular) in {@link UserController} so that frontends using the plural
+ * path still work correctly.
  */
 @RestController
 @RequestMapping("/api/users")
 @RequiredArgsConstructor
 @Slf4j
-@Tag(name = "Users (Manager-Aware)", description = "Create users with manager assignment and fetch managers dropdown")
+@Tag(name = "Users (Manager-Aware)", description = "Create users with manager assignment, fetch managers dropdown, and update users")
 @SecurityRequirement(name = "bearerAuth")
 public class ManagerController {
 
@@ -95,5 +99,60 @@ public class ManagerController {
         log.info("GET /api/users/managers");
         return ResponseEntity.ok(userService.getAllManagers());
     }
+
+    // ── PUT /api/users/{id} — JSON only (alias for PUT /api/user/{id}) ────
+    @Operation(
+        summary     = "Update a user's profile — JSON body (alias for PUT /api/user/{id})",
+        description = """
+            Alias endpoint so frontends using the plural `/api/users/{id}` path
+            work correctly. Delegates directly to the same service method as
+            `PUT /api/user/{id}`.
+
+            All profile fields including `role` and `managerId` are accepted.
+            Leave `password` blank/omit to keep the existing password.
+
+            Manager-assignment rules:
+            - `role = ROLE_USER`    → `managerId` is required (non-null).
+            - `role = ROLE_MANAGER` → `managerId` must be null.
+            - `role = ROLE_ADMIN`   → `managerId` must be null.
+            """
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "User updated successfully"),
+        @ApiResponse(responseCode = "400", description = "Validation failed"),
+        @ApiResponse(responseCode = "404", description = "User or manager not found"),
+        @ApiResponse(responseCode = "409", description = "Duplicate username/email or invalid manager assignment")
+    })
+    @PutMapping(value = "/{id}", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @PreAuthorize("hasAnyRole('USER','MANAGER','ADMIN')")
+    public ResponseEntity<UserResponseDTO> updateUserJson(
+            @PathVariable Long id,
+            @Valid @RequestBody UserRequestDTO dto) {
+        log.info("PUT /api/users/{} (JSON alias)", id);
+        return ResponseEntity.ok(userService.updateUser(id, dto, null));
+    }
+
+    // ── PUT /api/users/{id} — multipart (alias for PUT /api/user/{id}) ────
+    @Operation(
+        summary     = "Update a user's profile with optional photo — multipart (alias for PUT /api/user/{id})",
+        description = """
+            Multipart alias for frontends using the plural path.
+            Send as `multipart/form-data` with:
+            - **dto**   — JSON part (Content-Type: application/json)
+            - **photo** — optional image file (JPEG/PNG/GIF/WEBP, max 5 MB)
+            """
+    )
+    @PutMapping(value = "/{id}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAnyRole('USER','MANAGER','ADMIN')")
+    public ResponseEntity<UserResponseDTO> updateUserMultipart(
+            @PathVariable Long id,
+            @Valid @RequestPart("dto") UserRequestDTO dto,
+            @RequestPart(value = "photo", required = false) MultipartFile photo) {
+        log.info("PUT /api/users/{} (multipart alias)", id);
+        return ResponseEntity.ok(userService.updateUser(id, dto, photo));
+    }
 }
+
+
+
 

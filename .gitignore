@@ -1,33 +1,24 @@
-HELP.md
+﻿# ── Maven ─────────────────────────────────────────────────────────────────
 target/
-.mvn/wrapper/maven-wrapper.jar
+!.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
-
-### STS ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-
-### IntelliJ IDEA ###
-.idea
-*.iws
+# ── IDE ───────────────────────────────────────────────────────────────────
+.idea/
 *.iml
-*.ipr
-
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-build/
-!**/src/main/**/build/
-!**/src/test/**/build/
-
-### VS Code ###
-.vscode/
+*.iws
+.classpath
+.project
+.settings/
+*.eclipse
+# ── OS ────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+# ── Application logs ──────────────────────────────────────────────────────
+logs/
+*.log
+*.log.*.gz
+# ── Uploaded files (runtime artefacts — not source code) ──────────────────
+uploads/
+# ── Spring Boot devtools restart file ─────────────────────────────────────
+.spring-boot-devtools.properties
