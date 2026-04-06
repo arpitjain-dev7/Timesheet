@@ -1,5 +1,6 @@
 package com.timesheetManagement.controller;
 
+import com.timesheetManagement.dto.ChangePasswordRequest;
 import com.timesheetManagement.dto.UserRequestDTO;
 import com.timesheetManagement.dto.UserResponseDTO;
 import com.timesheetManagement.service.UserService;
@@ -16,7 +17,9 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -119,6 +122,36 @@ public class UserController {
         log.info("DELETE /api/user/{}", id);
         userService.deleteUser(id);
         return ResponseEntity.ok(Map.of("message", "User with id " + id + " deleted successfully"));
+    }
+
+    // ── POST /api/user/me/change-password ─────────────────────────────────
+    @Operation(
+        summary     = "Change password for the currently authenticated user",
+        description = """
+            Allows the currently logged-in user to change their own password.
+            - `currentPassword` must match the user's existing password.
+            - `newPassword` must satisfy strength requirements: min 8 chars, uppercase, lowercase, digit, special char (@$!%*?&).
+            - `newPassword` and `confirmPassword` must match exactly.
+            - `newPassword` must differ from `currentPassword`.
+            - On success: all active refresh tokens are invalidated (forces re-login on all devices).
+            - Requires a valid JWT in the Authorization header.
+            """
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Password changed successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Validation failed / current password incorrect / passwords don't match"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "Unauthenticated — missing or invalid JWT")
+    })
+    @PostMapping("/me/change-password")
+    @PreAuthorize("hasAnyRole('USER','ADMIN','MANAGER')")
+    public ResponseEntity<Map<String, String>> changePassword(
+            @Valid @RequestBody ChangePasswordRequest request) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String username = auth.getName();
+        log.info("POST /api/user/me/change-password → {}", username);
+        userService.changePassword(username, request);
+        return ResponseEntity.ok(Map.of(
+                "message", "Password changed successfully. Please log in again with your new password."));
     }
 
     // ── PUT /api/user/{id}/photo ──────────────────────────────────────────

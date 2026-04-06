@@ -1,5 +1,6 @@
 package com.timesheetManagement.service;
 
+import com.timesheetManagement.dto.ChangePasswordRequest;
 import com.timesheetManagement.dto.UserRequestDTO;
 import com.timesheetManagement.dto.UserResponseDTO;
 import com.timesheetManagement.entity.Role;
@@ -230,6 +231,45 @@ public class UserService {
         User saved = userRepository.save(user);
         log.info("[USER_PHOTO] ✅ Photo updated for id={}, username='{}'", saved.getId(), saved.getUsername());
         return toResponseDTO(saved);
+    }
+
+    // ── CHANGE PASSWORD (authenticated user) ───────────────────────────────
+    @Transactional
+    public void changePassword(String username, ChangePasswordRequest request) {
+        log.info("[CHANGE_PASSWORD] Password change requested by username='{}'", username);
+
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> {
+                    log.warn("[CHANGE_PASSWORD] User not found: username='{}'", username);
+                    return new ResourceNotFoundException("User not found: " + username);
+                });
+
+        // 1. Verify current password matches the stored BCrypt hash
+        if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPassword())) {
+            log.warn("[CHANGE_PASSWORD] Incorrect current password for username='{}'", username);
+            throw new IllegalArgumentException("Current password is incorrect");
+        }
+
+        // 2. New password must differ from the current one
+        if (passwordEncoder.matches(request.getNewPassword(), user.getPassword())) {
+            log.warn("[CHANGE_PASSWORD] New password is the same as the current one for username='{}'", username);
+            throw new IllegalArgumentException("New password must be different from the current password");
+        }
+
+        // 3. Confirm password must match new password
+        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+            log.warn("[CHANGE_PASSWORD] Passwords do not match for username='{}'", username);
+            throw new IllegalArgumentException("New password and confirm password do not match");
+        }
+
+        // 4. Encode and persist the new password
+        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        userRepository.save(user);
+
+        // 5. Invalidate all refresh tokens so existing sessions are forced to re-login
+        refreshTokenRepository.deleteByUser(user);
+
+        log.info("[CHANGE_PASSWORD] ✅ Password changed successfully for username='{}'", username);
     }
 
     // ── DELETE ─────────────────────────────────────────────────────────────

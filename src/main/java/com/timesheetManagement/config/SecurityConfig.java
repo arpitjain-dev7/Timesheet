@@ -86,7 +86,10 @@ public class SecurityConfig {
                 "Content-Type",
                 "Accept",
                 "X-Requested-With",
-                "Origin"
+                "Origin",
+                "Cache-Control",
+                "Pragma",
+                "Expires"
         ));
 
         // Expose Authorization so the frontend can read the JWT from the response
