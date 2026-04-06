@@ -46,5 +46,23 @@ public class UserRequestDTO {
 
     // Optional role for registration; defaults to ROLE_USER
     private RoleName role;
+
+    /**
+     * ID of the manager (a user with ROLE_MANAGER) to assign to this user.
+     *
+     * <p>Update rules (enforced in the service layer — never trust the UI):
+     * <ul>
+     *   <li>If effective role is {@code ROLE_MANAGER} or {@code ROLE_ADMIN} →
+     *       this field <b>must be null</b>; any non-null value is rejected (409).</li>
+     *   <li>If effective role is {@code ROLE_USER} and a value is supplied →
+     *       the referenced user must exist (404) and hold {@code ROLE_MANAGER} (409).</li>
+     *   <li>Cannot equal the id of the user being updated (self-assignment → 409).</li>
+     *   <li>If omitted ({@code null}) and role is not changing, the existing manager
+     *       is preserved (partial-update friendly).</li>
+     *   <li>If omitted and role is changing <em>to</em> {@code ROLE_USER} from a
+     *       non-user role, and the user has no existing manager → 409.</li>
+     * </ul>
+     */
+    private Long managerId;
 }
 
