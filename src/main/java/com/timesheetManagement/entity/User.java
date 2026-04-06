@@ -63,6 +63,20 @@ public class User {
     @Column(name = "photo_path")
     private String photoPath;
 
+    // ── Manager relationship (self-referencing FK) ─────────────────────────
+    /**
+     * The manager of this user — always a user whose role is ROLE_MANAGER.
+     * Persisted as {@code manager_id} FK in the {@code users} table.
+     * LAZY-loaded so we never pay an extra join unless explicitly needed.
+     *
+     * <p>Intentionally kept alongside the legacy {@code manager_email} text
+     * column so older code that still reads {@code managerEmail} continues to
+     * work without a migration.  New code should always go through this field.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "manager_id")
+    private User manager;
+
     // ── Roles ──────────────────────────────────────────────────────────────
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(

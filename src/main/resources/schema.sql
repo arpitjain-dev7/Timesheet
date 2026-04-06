@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS users (
     gender              VARCHAR(20),
     location            VARCHAR(100),
     designation         VARCHAR(100),
-    manager_email       VARCHAR(100),
+    manager_email       VARCHAR(100),           -- legacy free-text field; kept for backward compat
+    manager_id          BIGINT,                 -- FK → users(id), set via @ManyToOne in entity
     type_of_employment  VARCHAR(20),
     photo_path          TEXT,
     -- ── Password reset / OTP fields ────────────────────────────────────────
@@ -36,7 +37,8 @@ CREATE TABLE IF NOT EXISTS users (
     reset_token             VARCHAR(128),         -- SHA-256 hex of the reset token
     reset_token_expires_at  TIMESTAMP,            -- token validity window (verified_at + 15 min)
     created_at          TIMESTAMP,
-    updated_at          TIMESTAMP
+    updated_at          TIMESTAMP,
+    CONSTRAINT fk_user_manager FOREIGN KEY (manager_id) REFERENCES users (id) ON DELETE SET NULL
 );
 
 -- ── user_roles ────────────────────────────────────────────────────────────────

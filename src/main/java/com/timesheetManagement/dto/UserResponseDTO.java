@@ -28,6 +28,13 @@ public class UserResponseDTO {
     private TypeOfEmployment typeOfEmployment;
     private String photoUrl;
     private List<String> roles;
+
+    // ── Manager FK fields (null for MANAGER / ADMIN accounts) ─────────────
+    /** Primary key of the assigned manager user, or {@code null} if none. */
+    private Long   managerId;
+    /** Full name ({@code firstName + " " + lastName}) of the assigned manager. */
+    private String managerName;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

@@ -144,6 +144,24 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.FORBIDDEN, "Access denied: insufficient permissions", req, null);
     }
 
+    // ── 404 · Manager not found ───────────────────────────────────────────
+    @ExceptionHandler(ManagerNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleManagerNotFound(
+            ManagerNotFoundException ex, HttpServletRequest req) {
+
+        log.warn("[MANAGER_NOT_FOUND] {} {} → {}", req.getMethod(), req.getRequestURI(), ex.getMessage());
+        return build(HttpStatus.NOT_FOUND, ex.getMessage(), req, null);
+    }
+
+    // ── 409 · Invalid manager assignment (role rule / self-assign) ────────
+    @ExceptionHandler(InvalidManagerAssignmentException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidManagerAssignment(
+            InvalidManagerAssignmentException ex, HttpServletRequest req) {
+
+        log.warn("[INVALID_MANAGER_ASSIGNMENT] {} {} → {}", req.getMethod(), req.getRequestURI(), ex.getMessage());
+        return build(HttpStatus.CONFLICT, ex.getMessage(), req, null);
+    }
+
     // ── 404 · Resource not found ──────────────────────────────────────────
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleNotFound(

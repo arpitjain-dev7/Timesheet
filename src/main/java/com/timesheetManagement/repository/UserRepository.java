@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -47,5 +48,20 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Page<User> findAllExcludingRoles(
             @Param("excludedRoles") Collection<RoleName> excludedRoles,
             Pageable pageable);
+
+    /**
+     * Returns every user who holds {@code ROLE_MANAGER}, ordered
+     * alphabetically by first name then last name.
+     *
+     * <p>Used by {@code GET /api/users/managers} to populate UI dropdowns.
+     * A single JPQL query — no extra round-trips.
+     */
+    @Query("""
+           SELECT u FROM User u
+           JOIN u.roles r
+           WHERE r.name = :roleName
+           ORDER BY u.firstName ASC, u.lastName ASC
+           """)
+    List<User> findAllByRoleName(@Param("roleName") RoleName roleName);
 }
 

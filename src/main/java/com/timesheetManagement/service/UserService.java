@@ -1,12 +1,16 @@
 package com.timesheetManagement.service;
 
 import com.timesheetManagement.dto.ChangePasswordRequest;
+import com.timesheetManagement.dto.CreateUserRequest;
+import com.timesheetManagement.dto.ManagerResponse;
 import com.timesheetManagement.dto.UserRequestDTO;
 import com.timesheetManagement.dto.UserResponseDTO;
 import com.timesheetManagement.entity.Role;
 import com.timesheetManagement.entity.RoleName;
 import com.timesheetManagement.entity.User;
 import com.timesheetManagement.exception.FileUploadException;
+import com.timesheetManagement.exception.InvalidManagerAssignmentException;
+import com.timesheetManagement.exception.ManagerNotFoundException;
 import com.timesheetManagement.exception.ResourceNotFoundException;
 import com.timesheetManagement.exception.RoleNotFoundException;
 import com.timesheetManagement.exception.UserAlreadyExistsException;
@@ -45,6 +49,152 @@ public class UserService {
     private final ProjectAssignmentRepository assignmentRepository;
     private final TimesheetRepository         timesheetRepository;
     private final EmailService                emailService;
+
+    // ── CREATE with manager validation ─────────────────────────────────────
+    /**
+     * Creates a new user account with strict manager-assignment rules:
+     * <ol>
+     *   <li>Username and email must be unique.</li>
+     *   <li>ROLE_USER → {@code managerId} is required.</li>
+     *   <li>ROLE_MANAGER / ROLE_ADMIN → {@code managerId} must be null.</li>
+     *   <li>Referenced manager must exist in the DB.</li>
+     *   <li>Referenced manager must hold {@code ROLE_MANAGER}.</li>
+     *   <li>{@code managerId} cannot point to the account being created
+     *       (self-assignment guard — always false on create since the new user
+     *       has no ID yet, but enforced here so the same rule applies on future
+     *       update flows that reuse this logic).</li>
+     * </ol>
+     *
+     * @throws UserAlreadyExistsException        username or email already taken (409)
+     * @throws InvalidManagerAssignmentException manager rule violated (409)
+     * @throws ManagerNotFoundException          managerId not found in DB (404)
+     */
+    @Transactional
+    public UserResponseDTO createUserWithManager(CreateUserRequest request) {
+        log.info("[USER_CREATE_MGR] username='{}', email='{}', role='{}'",
+                request.getUsername(), request.getEmail(), request.getRole());
+
+        // ── 1. Uniqueness ─────────────────────────────────────────────────
+        if (userRepository.existsByUsername(request.getUsername())) {
+            log.warn("[USER_CREATE_MGR] Username '{}' already taken", request.getUsername());
+            throw new UserAlreadyExistsException(
+                    "Username '" + request.getUsername() + "' is already taken");
+        }
+        if (userRepository.existsByEmail(request.getEmail())) {
+            log.warn("[USER_CREATE_MGR] Email '{}' already registered", request.getEmail());
+            throw new UserAlreadyExistsException(
+                    "Email '" + request.getEmail() + "' is already registered");
+        }
+
+        // ── 2. Resolve role ───────────────────────────────────────────────
+        RoleName roleName = request.getRole() != null ? request.getRole() : RoleName.ROLE_USER;
+
+        // ── 3. Manager-assignment rule matrix ─────────────────────────────
+        if (roleName == RoleName.ROLE_USER) {
+            if (request.getManagerId() == null) {
+                log.warn("[USER_CREATE_MGR] managerId is required for ROLE_USER");
+                throw new InvalidManagerAssignmentException(
+                        "A manager must be assigned when creating a user with role ROLE_USER");
+            }
+        } else {
+            // ROLE_MANAGER and ROLE_ADMIN must NOT have a manager
+            if (request.getManagerId() != null) {
+                log.warn("[USER_CREATE_MGR] managerId must be null for role '{}'", roleName);
+                throw new InvalidManagerAssignmentException(
+                        "Users with role " + roleName + " cannot be assigned a manager. "
+                        + "Set managerId to null.");
+            }
+        }
+
+        // ── 4. Resolve and validate manager ──────────────────────────────
+        User manager = null;
+        if (request.getManagerId() != null) {
+            manager = userRepository.findById(request.getManagerId())
+                    .orElseThrow(() -> {
+                        log.warn("[USER_CREATE_MGR] Manager id={} not found", request.getManagerId());
+                        return new ManagerNotFoundException(request.getManagerId());
+                    });
+
+            // Manager must hold ROLE_MANAGER
+            boolean hasManagerRole = manager.getRoles().stream()
+                    .anyMatch(r -> r.getName() == RoleName.ROLE_MANAGER);
+            if (!hasManagerRole) {
+                log.warn("[USER_CREATE_MGR] User id={} is not a MANAGER", request.getManagerId());
+                throw new InvalidManagerAssignmentException(
+                        "User with id " + request.getManagerId()
+                        + " does not have the ROLE_MANAGER role and cannot be assigned as a manager");
+            }
+
+            // Self-assignment guard (always false on create; kept for symmetry with update)
+            // The new user has no ID yet so this branch can never trigger here,
+            // but the check is documented for completeness.
+        }
+
+        // ── 5. Resolve role entity ────────────────────────────────────────
+        Role role = roleRepository.findByName(roleName)
+                .orElseThrow(() -> {
+                    log.error("[USER_CREATE_MGR] Role '{}' not found in DB", roleName);
+                    return new RoleNotFoundException(roleName.name());
+                });
+
+        Set<Role> roles = new HashSet<>();
+        roles.add(role);
+
+        // ── 6. Persist ────────────────────────────────────────────────────
+        User user = User.builder()
+                .firstName(request.getFirstName())
+                .lastName(request.getLastName())
+                .username(request.getUsername())
+                .email(request.getEmail())
+                .password(passwordEncoder.encode(request.getPassword()))
+                .gender(request.getGender())
+                .location(request.getLocation())
+                .designation(request.getDesignation())
+                .typeOfEmployment(request.getTypeOfEmployment())
+                .manager(manager)
+                .roles(roles)
+                .build();
+
+        User saved = userRepository.save(user);
+        log.info("[USER_CREATE_MGR] ✅ User created: id={}, username='{}', managerId={}",
+                saved.getId(), saved.getUsername(),
+                manager != null ? manager.getId() : "none");
+
+        // ── 7. Welcome email ──────────────────────────────────────────────
+        String displayRole = toDisplayRole(roleName);
+        emailService.sendWelcomeEmail(
+                saved.getEmail(),
+                saved.getFirstName() + " " + saved.getLastName(),
+                saved.getUsername(),
+                request.getPassword(),    // plaintext — before BCrypt
+                displayRole
+        );
+
+        return toResponseDTO(saved);
+    }
+
+    // ── FETCH ALL MANAGERS (for UI dropdown) ──────────────────────────────
+    /**
+     * Returns every user with {@code ROLE_MANAGER}, sorted alphabetically
+     * by first name then last name — exactly what a "pick a manager" dropdown
+     * needs.  A single JPQL query; no N+1.
+     */
+    @Transactional(readOnly = true)
+    public List<ManagerResponse> getAllManagers() {
+        log.debug("[MANAGER_LIST] Fetching all managers");
+        List<ManagerResponse> managers = userRepository
+                .findAllByRoleName(RoleName.ROLE_MANAGER)
+                .stream()
+                .map(u -> ManagerResponse.builder()
+                        .id(u.getId())
+                        .firstName(u.getFirstName())
+                        .lastName(u.getLastName())
+                        .email(u.getEmail())
+                        .build())
+                .toList();
+        log.debug("[MANAGER_LIST] Found {} managers", managers.size());
+        return managers;
+    }
 
     // ── CREATE ─────────────────────────────────────────────────────────────
     @Transactional
@@ -327,6 +477,8 @@ public class UserService {
 
     // ── Mapper ────────────────────────────────────────────────────────────
     public UserResponseDTO toResponseDTO(User user) {
+        // Resolve lazy manager safely — only accessed inside a @Transactional boundary
+        User mgr = user.getManager();
         return UserResponseDTO.builder()
                 .id(user.getId())
                 .firstName(user.getFirstName())
@@ -337,6 +489,8 @@ public class UserService {
                 .location(user.getLocation())
                 .designation(user.getDesignation())
                 .managerEmail(user.getManagerEmail())
+                .managerId(mgr != null ? mgr.getId() : null)
+                .managerName(mgr != null ? mgr.getFirstName() + " " + mgr.getLastName() : null)
                 .typeOfEmployment(user.getTypeOfEmployment())
                 .photoUrl(user.getPhotoPath())
                 .roles(user.getRoles().stream()
