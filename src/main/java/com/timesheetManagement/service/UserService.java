@@ -43,6 +43,7 @@ public class UserService {
     private final ProjectRepository           projectRepository;
     private final ProjectAssignmentRepository assignmentRepository;
     private final TimesheetRepository         timesheetRepository;
+    private final EmailService                emailService;
 
     // ── CREATE ─────────────────────────────────────────────────────────────
     @Transactional
@@ -99,6 +100,22 @@ public class UserService {
 
         User saved = userRepository.save(user);
         log.info("[USER_CREATE] ✅ User created: id={}, username='{}'", saved.getId(), saved.getUsername());
+
+        // ── Send welcome email with login credentials ─────────────────────
+        // dto.getPassword() is the raw plaintext password — read BEFORE
+        // passwordEncoder.encode() was applied to the user builder.
+        // The email is sent asynchronously so it never delays this response.
+        String displayRole = toDisplayRole(roleName);
+        log.info("[USER_CREATE] Triggering welcome email for username='{}', email='{}'",
+                saved.getUsername(), saved.getEmail());
+        emailService.sendWelcomeEmail(
+                saved.getEmail(),
+                saved.getFirstName() + " " + saved.getLastName(),
+                saved.getUsername(),
+                dto.getPassword(),     // plaintext — captured before BCrypt encoding
+                displayRole
+        );
+
         return toResponseDTO(saved);
     }
 
@@ -289,5 +306,14 @@ public class UserService {
     private User findUserById(Long id) {
         return userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
+    }
+
+    /**
+     * Converts a {@link RoleName} enum to a display-friendly string for emails.
+     * e.g. ROLE_USER → "User", ROLE_MANAGER → "Manager", ROLE_ADMIN → "Admin"
+     */
+    private String toDisplayRole(RoleName roleName) {
+        String stripped = roleName.name().replace("ROLE_", "");  // "ROLE_USER" → "USER"
+        return stripped.charAt(0) + stripped.substring(1).toLowerCase(); // "USER" → "User"
     }
 }
