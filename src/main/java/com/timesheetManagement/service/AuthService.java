@@ -46,6 +46,7 @@ public class AuthService {
     private final JwtUtils              jwtUtils;
     private final RefreshTokenService   refreshTokenService;
     private final FileUploadUtil        fileUploadUtil;
+    private final EmailService          emailService;
 
     // ── Register ──────────────────────────────────────────────────────────
     @Transactional
@@ -104,6 +105,22 @@ public class AuthService {
         userRepository.save(user);
         log.info("[REGISTER] ✅ User registered successfully: username='{}', role='{}'",
                 user.getUsername(), roleName);
+
+        // ── Send welcome email with credentials ───────────────────────────
+        // request.getPassword() is the raw plaintext — captured BEFORE the
+        // passwordEncoder.encode() call above. Sent async so it never
+        // delays the registration response.
+        String displayRole = roleName.name().replace("ROLE_", "");
+        displayRole = displayRole.charAt(0) + displayRole.substring(1).toLowerCase();
+        log.info("[REGISTER] Triggering welcome email for username='{}', email='{}'",
+                user.getUsername(), user.getEmail());
+        emailService.sendWelcomeEmail(
+                user.getEmail(),
+                user.getFirstName() + " " + user.getLastName(),
+                user.getUsername(),
+                request.getPassword(),   // plaintext — before BCrypt
+                displayRole
+        );
 
         return new MessageResponse(HttpStatus.CREATED.value(), "User registered successfully");
     }
