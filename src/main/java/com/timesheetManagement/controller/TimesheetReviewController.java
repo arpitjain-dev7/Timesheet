@@ -36,7 +36,7 @@ public class TimesheetReviewController {
 
     // ── GET /api/manager/timesheets — filter with optional params ─────────
     @Operation(
-        summary = "List timesheets with optional filters (MANAGER only)",
+        summary = "List timesheets with optional filters (MANAGER/ADMIN only)",
         description = """
                 All query parameters are optional. Combine freely:
                 - **projectId** — only timesheets containing entries for this project
@@ -45,6 +45,10 @@ public class TimesheetReviewController {
                 - **dateTo**    — entries on or before this date
                 - **status**    — DRAFT | SUBMITTED | APPROVED | REJECTED
                 - **page / size / sortBy / sortDir** — standard pagination
+
+                **Scope rule:**
+                - ROLE_MANAGER can only see timesheets of their own direct reports.
+                - ROLE_ADMIN can see all timesheets.
                 """)
     @GetMapping
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
@@ -52,7 +56,7 @@ public class TimesheetReviewController {
             @Parameter(description = "Filter by project ID")
             @RequestParam(required = false) Long projectId,
 
-            @Parameter(description = "Filter by user ID")
+            @Parameter(description = "Filter by user ID (manager scope is enforced)")
             @RequestParam(required = false) Long userId,
 
             @Parameter(description = "Entries on or after (yyyy-MM-dd)")
@@ -67,16 +71,20 @@ public class TimesheetReviewController {
             @RequestParam(defaultValue = "0")           int page,
             @RequestParam(defaultValue = "10")          int size,
             @RequestParam(defaultValue = "createdAt")   String sortBy,
-            @RequestParam(defaultValue = "desc")        String sortDir) {
+            @RequestParam(defaultValue = "desc")        String sortDir,
+
+            @AuthenticationPrincipal UserDetails userDetails) {
 
         Sort sort = "asc".equalsIgnoreCase(sortDir)
                 ? Sort.by(sortBy).ascending() : Sort.by(sortBy).descending();
 
         Page<TimesheetResponse> result = reviewService.filterTimesheetsForManager(
+                userDetails.getUsername(),
                 projectId, userId, dateFrom, dateTo, status,
                 PageRequest.of(page, size, sort));
 
-        log.info("GET /api/manager/timesheets → total={}", result.getTotalElements());
+        log.info("GET /api/manager/timesheets manager='{}' → total={}",
+                userDetails.getUsername(), result.getTotalElements());
 
         return ResponseEntity.ok(Map.of(
                 "timesheets",  result.getContent(),

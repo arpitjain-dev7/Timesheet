@@ -2,6 +2,7 @@ package com.timesheetManagement.service;
 
 import com.timesheetManagement.dto.TimesheetResponse;
 import com.timesheetManagement.dto.TimesheetReviewRequest;
+import com.timesheetManagement.entity.RoleName;
 import com.timesheetManagement.entity.Timesheet;
 import com.timesheetManagement.entity.TimesheetEntry;
 import com.timesheetManagement.entity.TimesheetStatus;
@@ -44,16 +45,21 @@ public class TimesheetReviewService {
     public TimesheetResponse approveTimesheet(Long id, String managerUsername) {
         log.info("[TS_APPROVE] id={}, manager='{}'", id, managerUsername);
 
-        Timesheet ts    = findWithEntries(id);
-        User      mgr   = findUser(managerUsername);
+        Timesheet ts  = findWithEntries(id);
+        User      mgr = findUser(managerUsername);
 
         assertSubmitted(ts);
 
-        // ── Business rule: manager cannot approve their own timesheet ─────
+        // ── Self-approval guard ───────────────────────────────────────────
         if (ts.getUser().getUsername().equals(managerUsername)) {
+            log.warn("[TS_APPROVE] manager='{}' attempted to approve their own timesheet id={}",
+                    managerUsername, id);
             throw new ForbiddenOperationException(
                     "A manager cannot approve their own timesheet");
         }
+
+        // ── Scope guard: manager may only review their direct reports ─────
+        assertManagerCanReview(ts, mgr);
 
         ts.setStatus(TimesheetStatus.APPROVED);
         ts.setReviewedBy(mgr);
@@ -82,10 +88,16 @@ public class TimesheetReviewService {
 
         assertSubmitted(ts);
 
+        // ── Self-rejection guard ──────────────────────────────────────────
         if (ts.getUser().getUsername().equals(managerUsername)) {
+            log.warn("[TS_REJECT] manager='{}' attempted to reject their own timesheet id={}",
+                    managerUsername, id);
             throw new ForbiddenOperationException(
                     "A manager cannot reject their own timesheet");
         }
+
+        // ── Scope guard: manager may only review their direct reports ─────
+        assertManagerCanReview(ts, mgr);
 
         ts.setStatus(TimesheetStatus.REJECTED);
         ts.setReviewerComment(req.getComment());
@@ -105,6 +117,11 @@ public class TimesheetReviewService {
     //  FILTER TIMESHEETS FOR MANAGER
     //  Optional filters: projectId, userId, dateFrom, dateTo, status
     //
+    //  Scope rule:
+    //   - ROLE_MANAGER : only sees timesheets of their own direct reports
+    //                    (users whose manager_id = this manager's id).
+    //   - ROLE_ADMIN   : sees all timesheets (scope check bypassed).
+    //
     //  Uses JPA Criteria API (TimesheetSpecification) instead of JPQL to avoid
     //  the PostgreSQL "could not determine data type of parameter $N" error that
     //  occurs when null values are passed to "(:param IS NULL OR col = :param)"
@@ -112,6 +129,7 @@ public class TimesheetReviewService {
     // ══════════════════════════════════════════════════════════════════════
     @Transactional(readOnly = true)
     public Page<TimesheetResponse> filterTimesheetsForManager(
+            String managerUsername,
             Long projectId,
             Long userId,
             LocalDate dateFrom,
@@ -119,13 +137,50 @@ public class TimesheetReviewService {
             TimesheetStatus status,
             Pageable pageable) {
 
-        log.debug("[TS_FILTER] projectId={}, userId={}, from={}, to={}, status={}",
-                projectId, userId, dateFrom, dateTo, status);
+        User manager = findUser(managerUsername);
 
-        return timesheetRepository.findAll(
-                        TimesheetSpecification.filter(userId, status, projectId, dateFrom, dateTo),
+        boolean isAdmin = manager.getRoles().stream()
+                .anyMatch(r -> r.getName() == RoleName.ROLE_ADMIN);
+
+        log.debug("[TS_FILTER] manager='{}', isAdmin={}, projectId={}, userId={}, from={}, to={}, status={}",
+                managerUsername, isAdmin, projectId, userId, dateFrom, dateTo, status);
+
+        // Admin sees all timesheets; managers only see their direct reports.
+        // Passing null as managerId to the Specification means "no scope restriction".
+        Long scopedManagerId = isAdmin ? null : manager.getId();
+
+        // Extra guard: if caller (manager) tries to filter by a specific userId,
+        // verify that user is actually one of their direct reports.
+        if (!isAdmin && userId != null) {
+            User targetUser = userRepository.findById(userId)
+                    .orElseThrow(() -> {
+                        log.warn("[TS_FILTER] manager='{}' requested timesheets for unknown userId={}",
+                                managerUsername, userId);
+                        return new ResourceNotFoundException("User not found with id: " + userId);
+                    });
+
+            User targetManager = targetUser.getManager();
+            if (targetManager == null || !targetManager.getId().equals(manager.getId())) {
+                log.warn("[TS_FILTER] manager='{}' (id={}) tried to filter by userId={} " +
+                         "who reports to a different manager (managerId={})",
+                        managerUsername, manager.getId(), userId,
+                        targetManager != null ? targetManager.getId() : "none");
+                throw new ForbiddenOperationException(
+                        "You can only view timesheets of employees who report directly to you.");
+            }
+        }
+
+        Page<TimesheetResponse> result = timesheetRepository.findAll(
+                        TimesheetSpecification.filter(
+                                userId, status, projectId, dateFrom, dateTo, scopedManagerId),
                         pageable)
                 .map(timesheetService::toResponse);
+
+        log.info("[TS_FILTER] manager='{}', isAdmin={}, filters=[projectId={}, userId={}, from={}, to={}, status={}] → {} result(s)",
+                managerUsername, isAdmin, projectId, userId, dateFrom, dateTo, status,
+                result.getTotalElements());
+
+        return result;
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -268,5 +323,65 @@ public class TimesheetReviewService {
                             + ts.getStatus());
         }
     }
-}
 
+    /**
+     * Verifies that the given manager is authorised to review (approve/reject)
+     * the given timesheet.
+     *
+     * <p>Business rules:
+     * <ul>
+     *   <li><b>ROLE_ADMIN</b> — full access, scope check is bypassed.</li>
+     *   <li><b>ROLE_MANAGER</b> — may only review timesheets whose owner's
+     *       {@code manager_id} equals this manager's {@code id}.  If the
+     *       employee has no manager assigned, or a different manager, a
+     *       {@link ForbiddenOperationException} is thrown.</li>
+     * </ul>
+     *
+     * <p>Called inside an open {@code @Transactional} context so the lazy
+     * {@code user.manager} association is safely reachable.
+     *
+     * @param ts      the timesheet being reviewed (owner already loaded)
+     * @param manager the authenticated manager requesting the action
+     * @throws ForbiddenOperationException if the manager does not own the employee
+     */
+    private void assertManagerCanReview(Timesheet ts, User manager) {
+
+        // ── Admin bypass ──────────────────────────────────────────────────
+        boolean isAdmin = manager.getRoles().stream()
+                .anyMatch(r -> r.getName() == RoleName.ROLE_ADMIN);
+
+        if (isAdmin) {
+            log.debug("[TS_SCOPE] Admin '{}' — scope check bypassed for timesheet id={}",
+                    manager.getUsername(), ts.getId());
+            return;
+        }
+
+        // ── Direct-report check ───────────────────────────────────────────
+        User   owner        = ts.getUser();
+        User   ownerManager = owner.getManager();   // lazy — safe inside @Transactional
+
+        if (ownerManager == null) {
+            log.warn("[TS_SCOPE] Timesheet id={} owner='{}' has no manager assigned. " +
+                     "Manager '{}' (id={}) denied.",
+                    ts.getId(), owner.getUsername(), manager.getUsername(), manager.getId());
+            throw new ForbiddenOperationException(
+                    "You are not authorised to review this timesheet. " +
+                    "The employee currently has no manager assigned.");
+        }
+
+        if (!ownerManager.getId().equals(manager.getId())) {
+            log.warn("[TS_SCOPE] Manager '{}' (id={}) attempted to review timesheet id={} " +
+                     "belonging to user '{}' (id={}) who reports to manager id={}, not to them.",
+                    manager.getUsername(), manager.getId(),
+                    ts.getId(),
+                    owner.getUsername(), owner.getId(),
+                    ownerManager.getId());
+            throw new ForbiddenOperationException(
+                    "You are not authorised to review this timesheet. " +
+                    "You can only approve or reject timesheets of employees who report directly to you.");
+        }
+
+        log.debug("[TS_SCOPE] Manager '{}' (id={}) authorised to review timesheet id={} of user '{}'",
+                manager.getUsername(), manager.getId(), ts.getId(), owner.getUsername());
+    }
+}

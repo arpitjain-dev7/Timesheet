@@ -29,22 +29,34 @@ public class TimesheetSpecification {
      * Build a dynamic filter Specification. Any null argument is simply ignored
      * (no predicate added), so all parameters are truly optional.
      *
-     * @param userId    filter by timesheet owner ID
-     * @param status    filter by timesheet status
-     * @param projectId filter by project ID on any entry
-     * @param startDate entries on or after this date
-     * @param endDate   entries on or before this date
+     * @param userId     filter by timesheet owner ID
+     * @param status     filter by timesheet status
+     * @param projectId  filter by project ID on any entry
+     * @param startDate  entries on or after this date
+     * @param endDate    entries on or before this date
+     * @param managerId  when non-null, restricts results to timesheets whose
+     *                   owner's {@code manager_id} equals this value — i.e. the
+     *                   manager's direct reports only (scope guard)
      */
     public static Specification<Timesheet> filter(
             Long userId,
             TimesheetStatus status,
             Long projectId,
             LocalDate startDate,
-            LocalDate endDate) {
+            LocalDate endDate,
+            Long managerId) {
 
         return (Root<Timesheet> root, CriteriaQuery<?> query, CriteriaBuilder cb) -> {
 
             List<Predicate> predicates = new ArrayList<>();
+
+            // ── Manager scope guard (direct-reports only) ─────────────────
+            // When managerId is set, restrict to users whose manager FK matches.
+            // Null means ADMIN — no restriction applied.
+            if (managerId != null) {
+                predicates.add(cb.equal(
+                        root.get("user").get("manager").get("id"), managerId));
+            }
 
             // ── Owner filter ──────────────────────────────────────────────
             if (userId != null) {

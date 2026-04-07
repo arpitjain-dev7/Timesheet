@@ -22,9 +22,18 @@ public interface TimesheetRepository
     /** Admin/manager list — optionally filtered by status. */
     Page<Timesheet> findAllByStatus(TimesheetStatus status, Pageable pageable);
 
-    /** Eagerly load entries + project to avoid N+1 on detail view. */
+    /**
+     * Eagerly loads the timesheet with its owner, the owner's manager, and all
+     * time entries (+ their projects) in a single query.
+     *
+     * <p>The manager JOIN FETCH is required so the scope guard in
+     * {@code TimesheetReviewService} can call {@code ts.getUser().getManager()}
+     * without triggering additional lazy-load round-trips.
+     */
     @Query("""
            SELECT DISTINCT t FROM Timesheet t
+           LEFT JOIN FETCH t.user u
+           LEFT JOIN FETCH u.manager
            LEFT JOIN FETCH t.entries e
            LEFT JOIN FETCH e.project
            WHERE t.id = :id
