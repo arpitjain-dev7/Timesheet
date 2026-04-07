@@ -54,7 +54,10 @@ public class ManagerController {
     }
 
     @Operation(summary = "Bulk-create users from CSV file (ADMIN/MANAGER only)",
-        description = "Required headers: firstName,lastName,username,email,password. Optional: gender,location,designation,typeOfEmployment,role,managerId. Each row its own transaction. Welcome email async. Max 500 rows.")
+        description = "Required headers: firstName,lastName,username,email,password. "
+            + "Optional: gender,location,designation,typeOfEmployment,role,managerEmail. "
+            + "Use managerEmail (not managerId) to assign a manager — the service resolves the email to the manager's id internally. "
+            + "Each row is its own transaction. Welcome email sent async per user. Max 500 rows.")
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "Import completed",
             content = @Content(mediaType = "application/json", schema = @Schema(implementation = CsvBulkImportResponse.class))),

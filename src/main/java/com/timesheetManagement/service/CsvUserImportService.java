@@ -7,6 +7,8 @@ import com.timesheetManagement.dto.UserResponseDTO;
 import com.timesheetManagement.entity.Gender;
 import com.timesheetManagement.entity.RoleName;
 import com.timesheetManagement.entity.TypeOfEmployment;
+import com.timesheetManagement.entity.User;
+import com.timesheetManagement.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.csv.CSVFormat;
@@ -31,8 +33,14 @@ import java.util.Set;
  * <h3>Expected CSV headers (case-insensitive, order does not matter):</h3>
  * <pre>
  * firstName | lastName | username | email | password | gender | location
- *           | designation | typeOfEmployment | role | managerId
+ *           | designation | typeOfEmployment | role | managerEmail
  * </pre>
+ *
+ * <p><strong>Manager lookup:</strong> the {@code managerEmail} column is used
+ * (instead of a raw numeric ID) because email addresses are human-readable and
+ * easier to supply in a spreadsheet.  The service resolves the email to the
+ * corresponding manager's {@code id} internally, after verifying the referenced
+ * user actually holds {@code ROLE_MANAGER}.
  *
  * <h3>Design decisions:</h3>
  * <ul>
@@ -58,7 +66,8 @@ public class CsvUserImportService {
             "firstname", "lastname", "username", "email", "password"
     );
 
-    private final UserService userService;
+    private final UserService    userService;
+    private final UserRepository userRepository;
 
     // ══════════════════════════════════════════════════════════════════════
     //  PUBLIC ENTRY POINT
@@ -189,8 +198,15 @@ public class CsvUserImportService {
      * Maps a single {@link CSVRecord} to a {@link CreateUserRequest}, applying
      * lightweight type coercion.  Blank optional fields are left {@code null}.
      *
-     * @throws IllegalArgumentException if a required field is blank or an
-     *                                  enum value is unrecognised
+     * <p><strong>Manager resolution:</strong> the CSV column {@code managerEmail}
+     * is looked up in the database, the referenced user is verified to hold
+     * {@code ROLE_MANAGER}, and their numeric {@code id} is then passed to
+     * {@link CreateUserRequest#setManagerId(Long)}.  All validation rules inside
+     * {@code UserService.createUserWithManager} remain unchanged.
+     *
+     * @throws IllegalArgumentException if a required field is blank, an enum value
+     *                                  is unrecognised, or the manager email cannot
+     *                                  be resolved to a valid ROLE_MANAGER account
      */
     private CreateUserRequest mapRowToRequest(CSVRecord record, int rowNum) {
 
@@ -207,23 +223,17 @@ public class CsvUserImportService {
         String genderStr       = blankToNull(safeGet(record, "gender"));
         String employmentStr   = blankToNull(safeGet(record, "typeOfEmployment"));
         String roleStr         = blankToNull(safeGet(record, "role"));
-        String managerIdStr    = blankToNull(safeGet(record, "managerId"));
+        String managerEmailStr = blankToNull(safeGet(record, "managerEmail"));
 
         // ── Enum coercion ─────────────────────────────────────────────────
-        Gender          gender     = parseEnum(Gender.class,         genderStr,     rowNum, "gender");
-        TypeOfEmployment employment = parseEnum(TypeOfEmployment.class, employmentStr, rowNum, "typeOfEmployment");
-        RoleName         role       = parseEnum(RoleName.class,        roleStr,       rowNum, "role");
+        Gender           gender     = parseEnum(Gender.class,            genderStr,    rowNum, "gender");
+        TypeOfEmployment employment = parseEnum(TypeOfEmployment.class,  employmentStr, rowNum, "typeOfEmployment");
+        RoleName         role       = parseEnum(RoleName.class,          roleStr,       rowNum, "role");
 
-        // ── Manager ID ────────────────────────────────────────────────────
-        Long managerId = null;
-        if (managerIdStr != null) {
-            try {
-                managerId = Long.parseLong(managerIdStr.trim());
-            } catch (NumberFormatException ex) {
-                throw new IllegalArgumentException(
-                        "Row " + rowNum + ": 'managerId' must be a numeric value, got: '" + managerIdStr + "'");
-            }
-        }
+        // ── Manager resolution via email ──────────────────────────────────
+        // Resolves the human-readable managerEmail to a numeric manager id.
+        // Only performed when managerEmail is supplied in the CSV row.
+        Long managerId = resolveManagerId(managerEmailStr, rowNum);
 
         CreateUserRequest req = new CreateUserRequest();
         req.setFirstName(firstName);
@@ -238,6 +248,58 @@ public class CsvUserImportService {
         req.setRole(role);
         req.setManagerId(managerId);
         return req;
+    }
+
+    /**
+     * Resolves a manager's email address to their numeric user {@code id}.
+     *
+     * <p>Validation steps:
+     * <ol>
+     *   <li>If {@code managerEmail} is blank/null → returns {@code null}
+     *       (upstream validation in {@code UserService} will reject this if
+     *       the role requires a manager).</li>
+     *   <li>Looks up the user by email — throws if not found.</li>
+     *   <li>Verifies the found user holds {@code ROLE_MANAGER} — throws if not.</li>
+     * </ol>
+     *
+     * @param managerEmail the raw value from the CSV cell (may be null)
+     * @param rowNum       1-based row number for error messages
+     * @return the manager's {@code id}, or {@code null} when email is blank
+     * @throws IllegalArgumentException if the email cannot be resolved to a valid manager
+     */
+    private Long resolveManagerId(String managerEmail, int rowNum) {
+        if (managerEmail == null) {
+            return null;   // optional — UserService will enforce if role requires it
+        }
+
+        log.debug("[CSV_IMPORT] Row {} — resolving managerEmail='{}'", rowNum, managerEmail);
+
+        // ── 1. Look up user by email ──────────────────────────────────────
+        User manager = userRepository.findByEmail(managerEmail)
+                .orElseThrow(() -> {
+                    log.warn("[CSV_IMPORT] Row {} — managerEmail='{}' not found in the system",
+                            rowNum, managerEmail);
+                    return new IllegalArgumentException(
+                            "Row " + rowNum + ": No user found with managerEmail '"
+                            + managerEmail + "'. Please provide the email of an existing manager.");
+                });
+
+        // ── 2. Verify the user actually holds ROLE_MANAGER ────────────────
+        boolean hasManagerRole = manager.getRoles().stream()
+                .anyMatch(r -> r.getName() == RoleName.ROLE_MANAGER);
+
+        if (!hasManagerRole) {
+            log.warn("[CSV_IMPORT] Row {} — managerEmail='{}' (id={}) does not hold ROLE_MANAGER",
+                    rowNum, managerEmail, manager.getId());
+            throw new IllegalArgumentException(
+                    "Row " + rowNum + ": User with email '" + managerEmail
+                    + "' ('" + manager.getFirstName() + " " + manager.getLastName() + "')"
+                    + " does not have the ROLE_MANAGER role and cannot be assigned as a manager.");
+        }
+
+        log.debug("[CSV_IMPORT] Row {} — managerEmail='{}' resolved to managerId={}",
+                rowNum, managerEmail, manager.getId());
+        return manager.getId();
     }
 
     /** Reads a column value; returns empty string when the column does not exist. */
