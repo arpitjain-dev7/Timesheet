@@ -26,6 +26,10 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpHeaders;
+
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @RestController
@@ -77,7 +81,119 @@ public class ManagerController {
         return ResponseEntity.ok(response);
     }
 
+    // ── GET /api/users/import/csv/template ────────────────────────────────
+    @Operation(
+        summary     = "Download a sample CSV template for bulk user import (ADMIN/MANAGER only)",
+        description = """
+            Returns a ready-to-fill `.csv` file containing all supported column headers
+            and representative sample rows.
+
+            **Column guide:**
+
+            | Column             | Required | Allowed values |
+            |--------------------|----------|----------------|
+            | firstName          | ✅       | Text (max 50)  |
+            | lastName           | ✅       | Text (max 50)  |
+            | username           | ✅       | 3-50 chars, unique |
+            | email              | ✅       | Valid email, unique |
+            | password           | ✅       | Min 8 chars · uppercase · lowercase · digit · special char (@$!%*?&) |
+            | gender             | optional | MALE / FEMALE / OTHER / PREFER_NOT_TO_SAY |
+            | location           | optional | Text (max 100) |
+            | designation        | optional | Text (max 100) |
+            | typeOfEmployment   | optional | FULL_TIME / PART_TIME / CONTRACT / INTERNSHIP / FREELANCE |
+            | role               | optional | ROLE_USER (default) / ROLE_MANAGER / ROLE_ADMIN |
+            | managerEmail       | required for ROLE_USER | Email of an existing ROLE_MANAGER user |
+
+            **Rules:**
+            - `managerEmail` is **required** when `role = ROLE_USER`.
+            - `managerEmail` must be **blank** when `role = ROLE_MANAGER` or `ROLE_ADMIN`.
+            - Upload the filled file to `POST /api/users/import/csv`.
+            """
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "CSV template file returned as attachment"),
+        @ApiResponse(responseCode = "403", description = "ADMIN or MANAGER role required")
+    })
+    @GetMapping("/import/csv/template")
+    @PreAuthorize("hasAnyRole('ADMIN','MANAGER')")
+    public ResponseEntity<ByteArrayResource> downloadCsvTemplate() {
+        log.info("GET /api/users/import/csv/template — serving sample CSV");
+
+        String csv = buildSampleCsv();
+        byte[] bytes = csv.getBytes(StandardCharsets.UTF_8);
+
+        ByteArrayResource resource = new ByteArrayResource(bytes);
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"users-import-template.csv\"")
+                .contentType(org.springframework.http.MediaType
+                        .parseMediaType("text/csv; charset=UTF-8"))
+                .contentLength(bytes.length)
+                .body(resource);
+    }
+
+    /**
+     * Builds the sample CSV string with headers + illustrative data rows.
+     *
+     * <p>Rows are designed to demonstrate every column and both role types
+     * (ROLE_USER with managerEmail, ROLE_MANAGER without managerEmail) so
+     * the downloader has a concrete reference before filling real data.
+     */
+    private String buildSampleCsv() {
+        StringBuilder sb = new StringBuilder();
+
+        // ── Header row ────────────────────────────────────────────────────
+        sb.append("firstName,lastName,username,email,password,")
+          .append("gender,location,designation,typeOfEmployment,role,managerEmail")
+          .append("\n");
+
+        // ── Sample ROLE_USER rows ─────────────────────────────────────────
+        sb.append("John,Doe,john.doe,john.doe@company.com,Welcome@1234,")
+          .append("MALE,New York,Software Engineer,FULL_TIME,ROLE_USER,manager@company.com")
+          .append("\n");
+
+        sb.append("Jane,Smith,jane.smith,jane.smith@company.com,Welcome@1234,")
+          .append("FEMALE,Chicago,QA Engineer,FULL_TIME,ROLE_USER,manager@company.com")
+          .append("\n");
+
+        sb.append("Robert,Brown,robert.brown,robert.brown@company.com,Welcome@1234,")
+          .append("MALE,Austin,DevOps Engineer,CONTRACT,ROLE_USER,manager@company.com")
+          .append("\n");
+
+        sb.append("Emily,Clark,emily.clark,emily.clark@company.com,Welcome@1234,")
+          .append("FEMALE,Seattle,Business Analyst,PART_TIME,ROLE_USER,manager@company.com")
+          .append("\n");
+
+        sb.append("Priya,Sharma,priya.sharma,priya.sharma@company.com,Welcome@1234,")
+          .append("FEMALE,Noida,Data Analyst,FULL_TIME,ROLE_USER,manager@company.com")
+          .append("\n");
+
+        sb.append("Rahul,Gupta,rahul.gupta,rahul.gupta@company.com,Welcome@1234,")
+          .append("MALE,Bangalore,Mobile Developer,INTERNSHIP,ROLE_USER,manager@company.com")
+          .append("\n");
+
+        sb.append("David,Martinez,david.martinez,david.martinez@company.com,Welcome@1234,")
+          .append("MALE,Denver,UI/UX Designer,FREELANCE,ROLE_USER,manager@company.com")
+          .append("\n");
+
+        // ── Sample ROLE_MANAGER rows (managerEmail must be blank) ─────────
+        sb.append("Tom,Jackson,tom.jackson,tom.jackson@company.com,Manager@9876,")
+          .append("MALE,New York,Engineering Manager,FULL_TIME,ROLE_MANAGER,")
+          .append("\n");
+
+        sb.append("Lisa,White,lisa.white,lisa.white@company.com,Manager@9876,")
+          .append("FEMALE,Chicago,Project Manager,FULL_TIME,ROLE_MANAGER,")
+          .append("\n");
+
+        return sb.toString();
+    }
+
+    // ── GET /api/users/managers ────────────────────────────────────────────
     @Operation(summary = "Fetch all managers for UI dropdown")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "List of managers (may be empty)")
+    })
     @GetMapping("/managers")
     @PreAuthorize("hasAnyRole('USER','MANAGER','ADMIN')")
     public ResponseEntity<List<ManagerResponse>> getAllManagers() {
