@@ -66,6 +66,7 @@ public class EmailService {
         // Verify both templates are loadable from classpath
         checkTemplate("welcome-email.html");
         checkTemplate("forgot-password-otp.html");
+        checkTemplate("timesheet-status.html");
     }
 
     private void checkTemplate(String name) {
@@ -182,6 +183,121 @@ public class EmailService {
             log.error("[OTP_EMAIL] ❌ TEMPLATE ERROR — to='{}': {}", maskEmail(to), e.getMessage(), e);
         } catch (Exception e) {
             log.error("[OTP_EMAIL] ❌ UNEXPECTED ERROR — to='{}', {}: {}",
+                    maskEmail(to), e.getClass().getSimpleName(), e.getMessage(), e);
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  TIMESHEET STATUS EMAIL — sent after approve / reject
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Sends a styled HTML notification to the timesheet owner after a manager
+     * approves or rejects their submission.
+     *
+     * <p>Runs asynchronously on the emailTaskExecutor thread pool so the
+     * manager's HTTP response is never delayed by SMTP I/O.
+     *
+     * @param to                 owner's email address
+     * @param firstName          owner's first name (for the greeting)
+     * @param timesheetTitle     title / display name of the timesheet
+     * @param status             {@code "APPROVED"} or {@code "REJECTED"}
+     * @param periodRange        human-readable period string, e.g. "Apr 1 – Apr 7, 2026"
+     * @param reviewerName       full name of the reviewing manager
+     * @param reviewerComment    manager's rejection reason — {@code null} for approvals
+     * @param reviewedAt         formatted date-time of the review action
+     * @param totalHours         total hours logged in the timesheet (plain string)
+     * @param entryRowsHtml      pre-built {@code <tr>} HTML rows for the entries table
+     */
+    @Async
+    public void sendTimesheetStatusEmail(String to,
+                                         String firstName,
+                                         String timesheetTitle,
+                                         String status,
+                                         String periodRange,
+                                         String reviewerName,
+                                         String reviewerComment,
+                                         String reviewedAt,
+                                         String totalHours,
+                                         String entryRowsHtml) {
+
+        log.info("[TS_STATUS_EMAIL] ▶ START — thread='{}', to='{}', status='{}'",
+                Thread.currentThread().getName(), maskEmail(to), status);
+
+        boolean isApproved = "APPROVED".equalsIgnoreCase(status);
+
+        // ── Colour scheme based on decision ──────────────────────────────
+        String statusColor     = isApproved ? "#16a34a" : "#dc2626";
+        String statusBg        = isApproved ? "#f0fdf4" : "#fef2f2";
+        String statusBorder    = isApproved ? "#bbf7d0" : "#fecaca";
+        String statusHeaderBg  = isApproved ? "#16a34a" : "#dc2626";
+        String statusIcon      = isApproved ? "&#10003;" : "&#10007;";
+        String statusLower     = isApproved ? "approved" : "rejected";
+        String subject         = isApproved
+                ? "\u2705 Your Timesheet Has Been Approved \u2014 Timesheet Management"
+                : "\u274C Your Timesheet Has Been Rejected \u2014 Timesheet Management";
+
+        // ── Reviewer comment block (rejection only) ───────────────────────
+        String commentSection = "";
+        if (!isApproved && reviewerComment != null && !reviewerComment.isBlank()) {
+            commentSection =
+                "<div style=\"background:#fef2f2;border-left:4px solid #dc2626;"
+                + "border-radius:0 10px 10px 0;padding:18px 22px;margin-bottom:28px;\">"
+                + "<p style=\"margin:0 0 8px;color:#991b1b;font-size:11px;font-weight:800;"
+                + "text-transform:uppercase;letter-spacing:1px;\">&#128172;&nbsp; Manager's Comment</p>"
+                + "<p style=\"margin:0;color:#374151;font-size:14px;line-height:1.7;\">"
+                + reviewerComment
+                + "</p></div>";
+        }
+
+        // ── No entries fallback ───────────────────────────────────────────
+        String rowsHtml = (entryRowsHtml != null && !entryRowsHtml.isBlank())
+                ? entryRowsHtml
+                : "<tr><td colspan=\"4\" style=\"padding:18px;text-align:center;"
+                  + "color:#64748b;font-style:italic;font-size:13px;\">No entries recorded.</td></tr>";
+
+        try {
+            log.info("[TS_STATUS_EMAIL] Step 1/3 — Loading template...");
+            String html = loadTemplate("timesheet-status.html")
+                    .replace("{{FIRST_NAME}}",              firstName    != null ? firstName    : "User")
+                    .replace("{{STATUS}}",                   status.toUpperCase())
+                    .replace("{{STATUS_LOWER}}",             statusLower)
+                    .replace("{{STATUS_COLOR}}",             statusColor)
+                    .replace("{{STATUS_BG}}",                statusBg)
+                    .replace("{{STATUS_BORDER}}",            statusBorder)
+                    .replace("{{STATUS_HEADER_BG}}",         statusHeaderBg)
+                    .replace("{{STATUS_ICON}}",              statusIcon)
+                    .replace("{{TIMESHEET_TITLE}}",          timesheetTitle != null ? timesheetTitle : "—")
+                    .replace("{{PERIOD_RANGE}}",             periodRange    != null ? periodRange    : "—")
+                    .replace("{{TOTAL_HOURS}}",              totalHours     != null ? totalHours     : "0")
+                    .replace("{{REVIEWER_NAME}}",            reviewerName   != null ? reviewerName   : "—")
+                    .replace("{{REVIEWED_AT}}",              reviewedAt     != null ? reviewedAt     : "—")
+                    .replace("{{REVIEWER_COMMENT_SECTION}}", commentSection)
+                    .replace("{{ENTRIES_TABLE_ROWS}}",       rowsHtml)
+                    .replace("{{LOGIN_URL}}",                loginUrl);
+
+            log.info("[TS_STATUS_EMAIL] Step 1/3 — Template rendered ({} chars) ✓", html.length());
+
+            log.info("[TS_STATUS_EMAIL] Step 2/3 — Building MIME message...");
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(fromAddress);
+            helper.setTo(to);
+            helper.setSubject(subject);
+            helper.setText(html, true);
+            log.info("[TS_STATUS_EMAIL] Step 2/3 — MIME message built ✓");
+
+            log.info("[TS_STATUS_EMAIL] Step 3/3 — Sending via SMTP {}:{}...", mailHost, mailPort);
+            mailSender.send(message);
+            log.info("[TS_STATUS_EMAIL] ✅ SUCCESS — '{}' notification delivered to '{}'",
+                    status, maskEmail(to));
+
+        } catch (MessagingException e) {
+            log.error("[TS_STATUS_EMAIL] ❌ SMTP ERROR — to='{}': {}", maskEmail(to), e.getMessage(), e);
+        } catch (IllegalStateException e) {
+            log.error("[TS_STATUS_EMAIL] ❌ TEMPLATE ERROR — to='{}': {}", maskEmail(to), e.getMessage(), e);
+        } catch (Exception e) {
+            log.error("[TS_STATUS_EMAIL] ❌ UNEXPECTED ERROR — to='{}', {}: {}",
                     maskEmail(to), e.getClass().getSimpleName(), e.getMessage(), e);
         }
     }
