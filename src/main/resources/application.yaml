@@ -10,7 +10,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: create-drop  # Use 'update' or 'validate' in production
+      ddl-auto: update
     show-sql: false          # SQL logged via Hibernate category below
     open-in-view: false
     properties:
