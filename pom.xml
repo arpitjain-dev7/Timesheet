@@ -81,6 +81,13 @@
 			<version>2.8.6</version>
 		</dependency>
 
+		<!-- Apache Commons CSV — bulk user import via CSV upload -->
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-csv</artifactId>
+			<version>1.11.0</version>
+		</dependency>
+
 		<!-- Lombok -->
 		<dependency>
 			<groupId>org.projectlombok</groupId>
